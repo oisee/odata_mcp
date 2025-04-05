@@ -1,0 +1,16 @@
+*.env
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+*.log
+*.coverage
+*.egg
+*.egg-info/
+*.dist-info/
+.vscode/
+.idea/
+.DS_Store
+.claude/

@@ -1,0 +1,23 @@
+# OData MCP Bridge Requirements
+# External dependencies for the OData to MCP Bridge
+
+# HTTP requests library
+requests
+
+# XML parsing library
+lxml
+
+# Data validation and settings management
+pydantic
+
+# Environment variable management
+python-dotenv
+
+# Message Choreography Processor (MCP) library
+mcp
+
+# FastMCP for simplified MCP server creation
+fastmcp
+
+# Optional: Secure XML parsing (recommended for production)
+# defusedxml

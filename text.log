@@ -1,0 +1,12 @@
+OData MCP Wrapper Test Suite
+Service URL: http://vhcala4hci:50000/sap/opu/odata/sap/ZMCP_001_SRV/
+Authentication credentials found for user: AVINOGRADOVA
+Connecting to OData service: http://vhcala4hci:50000/sap/opu/odata/sap/ZMCP_001_SRV/
+Testing list_entities with entity set: snippetSet
+Retrieved 2 entities from snippetSet
+First entity keys: ['__metadata', 'CODE_SNIPPET', 'SOURCE_LANGUAGE', 'SOURCE_CODE', 'TARGET_LANGUAGE', 'TARGET_CODE', 'SYNTAX_STATUS', 'TEST_STATUS', 'LAST_ERROR', 'TASK_DESCRIPTION']
+Found 1 entity sets
+Found 1 entity types
+Found 2 function imports
+First entity set: snippetSet (type: snippet)
+Properties of snippet: ['CODE_SNIPPET', 'SOURCE_LANGUAGE', 'SOURCE_CODE', 'TARGET_LANGUAGE', 'TARGET_CODE', 'SYNTAX_STATUS', 'TEST_STATUS', 'LAST_ERROR', 'TASK_DESCRIPTION']

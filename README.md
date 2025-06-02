@@ -8,47 +8,23 @@ The OData MCP Wrapper enables seamless integration between OData v2 services and
 
 ### Key Features
 
-- Automatically generates MCP tools from OData metadata
-- Supports standard OData query parameters (filter, select, expand, orderby, etc.)
-- Provides pagination information, entity counts, and search capabilities
-- Handles CRUD operations (Create, Read, Update, Delete) for entity sets
-- Supports function imports defined in the OData service
-- Manages authentication, CSRF tokens, and error handling
-- Provides detailed logging with optional verbose mode
-
-## Architecture
-
-The wrapper consists of several key components:
-
-1. **MetadataParser**: Fetches and parses OData v2 metadata XML
-2. **ODataClient**: Manages HTTP communication with the OData service
-3. **ODataMCPBridge**: Main integration layer connecting OData and MCP
-4. **Pydantic Models**: Structured data models for metadata components
-
-The wrapper dynamically generates several types of tools for each entity set:
-- `filter_*`: For listing and filtering entities
-- `count_*`: For counting entities
-- `search_*`: For text searching within entities
-- `get_*`: For retrieving single entities by key
-- `create_*`: For creating new entities
-- `update_*`: For updating existing entities
-- `delete_*`: For removing entities
-
-It also generates tools for each function import defined in the OData service.
-
-For more detailed information about the architecture, see [claude_purpose_extraction.md](claude_purpose_extraction.md).
+- **Modular Architecture**: Split into focused modules for maintainability
+- **Enhanced Error Handling**: Comprehensive OData error parsing and propagation
+- **Smart Tool Naming**: Service-aware tool naming preserving original names
+- **Automatic Tool Generation**: Creates MCP tools from OData metadata
+- **Full CRUD Support**: Create, Read, Update, Delete operations for entity sets
+- **Query Capabilities**: Standard OData query parameters (filter, select, expand, orderby, etc.)
+- **Function Import Support**: Handles OData function imports
+- **Authentication**: Basic auth with CSRF token management
+- **GUID Optimization**: Automatic base64 ↔ standard GUID conversion
+- **Response Optimization**: Size limiting and selective field retrieval
 
 ## Installation
 
 ### Prerequisites
 
-- Python 3.6+
+- Python 3.8+
 - [FastMCP](https://github.com/yourusername/fastmcp) package
-- Required Python packages (install via pip):
-  - requests
-  - lxml
-  - pydantic
-  - python-dotenv
 
 ### Installation Steps
 
@@ -60,184 +36,209 @@ For more detailed information about the architecture, see [claude_purpose_extrac
 
 2. Install dependencies:
    ```bash
-   pip install requests lxml pydantic python-dotenv
+   pip install -r requirements.txt
    ```
-
-3. Ensure you have access to the FastMCP module
 
 ## Configuration
 
-The wrapper can be configured using command-line arguments or environment variables.
-
 ### Environment Variables
 
-Create a `.env` file in the project directory with the following variables:
+Create a `.env` file in the project directory:
 
-```
+```bash
 # OData service URL (required)
 ODATA_SERVICE_URL=https://your-odata-service.com/odata/
+ODATA_URL=https://your-odata-service.com/odata/  # Alternative
 
 # Authentication (if required)
 ODATA_USERNAME=your_username
+ODATA_USER=your_username  # Alternative
 ODATA_PASSWORD=your_password
+ODATA_PASS=your_password  # Alternative
 ```
 
 ## Usage
 
 ### Command Line
 
-Run the wrapper using:
-
 ```bash
-python odata_mcp.py --service https://your-odata-service.com/odata/ [--user USERNAME] [--password PASSWORD] [--verbose]
-```
-
-Or, if you've configured environment variables:
-
-```bash
+# Using environment variables
 python odata_mcp.py
+
+# Using command line arguments
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --user USERNAME \
+                    --password PASSWORD \
+                    --verbose
+
+# Additional options
+python odata_mcp.py --tool-prefix myprefix \
+                    --tool-postfix myservice \
+                    --no-postfix
 ```
 
-### Configuration Options
+### Generated Tools
 
-- `--service`: URL of the OData service (overrides environment variable)
-- `--user` / `-u`: Username for basic authentication (overrides environment variable)
-- `--password` / `-p`: Password for basic authentication (overrides environment variable)
-- `--verbose` / `--debug`: Enable verbose output to stderr
+The wrapper dynamically generates MCP tools for each entity set:
 
-### Using Generated Tools
+1. **List/Filter**: `filter_EntitySetName` - Query entities with filtering, sorting, pagination
+2. **Count**: `count_EntitySetName` - Get entity count with optional filtering  
+3. **Search**: `search_EntitySetName` - Full-text search (if supported)
+4. **Get**: `get_EntitySetName` - Retrieve single entity by key
+5. **Create**: `create_EntitySetName` - Create new entity
+6. **Update**: `update_EntitySetName` - Update existing entity  
+7. **Delete**: `delete_EntitySetName` - Delete entity
 
-Once the wrapper is running, the dynamically generated MCP tools become available:
+### Example Usage
 
-1. **List or Filter Entities**:
-   ```python
-   await filter_EntitySetName(filter="PropertyName eq 'Value'", top=10, orderby="PropertyName desc")
-   ```
+```python
+# List entities with filtering
+await filter_ProductSet(
+    filter="Price gt 20", 
+    orderby="Price desc", 
+    top=10
+)
 
-2. **Get Entity Count**:
-   ```python
-   await count_EntitySetName(filter="PropertyName eq 'Value'")
-   ```
+# Get specific entity
+await get_ProductSet(ID="12345")
 
-3. **Search Entities**:
-   ```python
-   await search_EntitySetName(search_term="search phrase", top=10)
-   ```
+# Create new entity
+await create_ProductSet(
+    Name="New Product",
+    Price=99.99,
+    CategoryID="CAT001"
+)
 
-4. **Get Single Entity**:
-   ```python
-   await get_EntitySetName(ID="key_value", expand="NavigationProperty")
-   ```
+# Update entity
+await update_ProductSet(
+    ID="12345",
+    Price=89.99
+)
 
-5. **Create Entity**:
-   ```python
-   await create_EntitySetName(PropertyName1="Value1", PropertyName2="Value2")
-   ```
+# Get service information
+await odata_service_info()
+```
 
-6. **Update Entity**:
-   ```python
-   await update_EntitySetName(ID="key_value", PropertyName="NewValue")
-   ```
+## Architecture
 
-7. **Delete Entity**:
-   ```python
-   await delete_EntitySetName(ID="key_value")
-   ```
+The project uses a modular architecture for maintainability:
 
-8. **Invoke Function**:
-   ```python
-   await FunctionName(Param1="Value1", Param2="Value2")
-   ```
+```
+odata_mcp_lib/                    # Core modular library
+├── __init__.py                   # Clean API exports
+├── constants.py                  # OData type mappings & namespaces
+├── models.py                     # Pydantic data models
+├── guid_handler.py               # GUID conversion utilities
+├── metadata_parser.py            # OData metadata parsing
+├── client.py                     # HTTP client with error handling
+└── bridge.py                     # MCP bridge implementation
 
-9. **Get Service Info**:
-   ```python
-   await odata_service_info()
-   ```
+odata_mcp.py                      # Main executable
+odata_mcp_compat.py               # Backward compatibility layer
+test_odata_mcp.py                 # Test suite
+```
+
+### Key Components
+
+- **MetadataParser**: Fetches and parses OData `$metadata` XML
+- **ODataClient**: Manages HTTP communication and CSRF tokens
+- **ODataMCPBridge**: Generates MCP tools from metadata
+- **GUIDHandler**: Converts between base64 and standard GUID formats
 
 ## Testing
 
-Run the test suite with:
-
 ```bash
-python -m unittest test_odata_mcp.py
+# Run unit tests
+python test_odata_mcp.py
+
+# Run with live service (requires valid OData service)
+RUN_LIVE_TESTS=true python test_odata_mcp.py
 ```
 
-To run live integration tests that connect to a real OData service:
+## Import Compatibility
 
-```bash
-RUN_LIVE_TESTS=true python -m unittest test_odata_mcp.py
-```
-
-The live integration tests require a valid OData service URL in your `.env` file or environment.
-
-## Examples
-
-### Basic Usage
-
+### New Code (Recommended)
 ```python
-# Import necessary modules
-from mcp.server.fastmcp import FastMCP
-import asyncio
-
-# Create an instance of the MCP client
-mcp_client = FastMCP(name="odata-mcp-client")
-
-# Connect to an OData service
-service_info = await mcp_client.invoke("odata_service_info")
-print(f"Connected to OData service: {service_info['service_url']}")
-
-# List products with filtering and ordering
-products = await mcp_client.invoke("filter_Products", 
-                                  filter="Price gt 20", 
-                                  orderby="Price desc", 
-                                  top=5)
-print(f"Found {len(products['results'])} expensive products")
-
-# Get a specific product
-product = await mcp_client.invoke("get_Products", ID="10")
-print(f"Product details: {product['Name']} - ${product['Price']}")
-
-# Create a new category
-new_category = await mcp_client.invoke("create_Categories", 
-                                      Name="New Category", 
-                                      Description="Example category created through OData MCP")
-print(f"Created category with ID: {new_category['ID']}")
+from odata_mcp_lib import MetadataParser, ODataClient, ODataMCPBridge
 ```
 
-## Roadmap
+### Legacy Code (Backward Compatible)
+```python
+from odata_mcp_compat import MetadataParser, ODataClient, ODataMCPBridge
+```
 
-- Support for OData v4 services
-- Enhanced batch operations
-- Support for additional authentication methods (OAuth, SAML)
-- Improved caching for better performance
-- Schema validation for input/output data
+## TODO & Roadmap
+
+### High Priority
+- [ ] Enhanced testing suite with comprehensive coverage
+- [ ] Module-specific unit tests leveraging new architecture
+- [ ] CI/CD pipeline setup for automated testing
+- [ ] Performance benchmarking and optimization
+
+### Short-term Goals (3-6 months)
+- [ ] OData v4 support
+- [ ] Enhanced batch operations
+- [ ] OAuth 2.0 authentication
+- [ ] Response caching for performance
+- [ ] Input validation improvements
+
+### Medium-term Goals (6-12 months)
+- [ ] Schema validation for input/output data
+- [ ] Advanced query capabilities (complex filters, aggregations)
+- [ ] Navigation property enhancements
+- [ ] Custom tool generation templates
+
+### Long-term Goals (12+ months)
+- [ ] GraphQL interface layer
+- [ ] Cross-service federation
+- [ ] Advanced security features (field-level security, data masking)
+- [ ] Comprehensive monitoring and metrics
+- [ ] Horizontal scaling support
+
+### Recently Completed ✅
+- [x] **Modular Architecture**: Split monolithic codebase into 7 focused modules
+- [x] **Enhanced Error Handling**: Comprehensive OData error parsing
+- [x] **Smart Tool Naming**: Service-aware naming preserving original names
+- [x] **Backward Compatibility**: Zero breaking changes maintained
+- [x] **Code Cleanup**: Removed redundant files and improved organization
+- [x] **GUID Optimization**: Automatic base64 ↔ standard format conversion
+- [x] **Response Optimization**: Size limiting and field selection
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Connection failures**:
-   - Verify the OData service URL is correct
-   - Ensure network connectivity and permissions
-   - Check authentication credentials if required
+1. **Connection Failures**
+   - Verify OData service URL and network connectivity
+   - Check authentication credentials
+   - Use `--verbose` for detailed error information
 
-2. **Missing entity sets or tools**:
-   - The service metadata might be incomplete
-   - Run with `--verbose` to see detailed information about the parsing process
+2. **Import Errors**
+   - Use `from odata_mcp_lib import ...` for new imports
+   - Use `from odata_mcp_compat import ...` for legacy compatibility
 
-3. **Operation failures**:
-   - Check for constraints in the OData service
-   - Verify required properties for create/update operations
-   - Ensure key values are correctly formatted
+3. **Tool Generation Issues**
+   - Ensure service metadata is accessible
+   - Check for valid entity sets in the metadata
+   - Review verbose logs for parsing errors
 
-### Logging
+4. **GUID/Binary Field Issues**
+   - GUID fields are automatically converted from base64
+   - Binary fields may be excluded by default for performance
 
-Enable verbose logging with the `--verbose` flag to see detailed information about:
-- Metadata parsing
-- HTTP requests and responses
-- Tool registration
-- Error details
+### Performance Tips
+
+- Use `$select` to limit returned fields
+- Apply `$top` for pagination
+- Use `$filter` to reduce result sets
+- Consider excluding binary fields for large datasets
 
 ## License
 
-Copyright (c) 2025
+Copyright (c) 2025. All rights reserved.
+
+---
+
+**Project Status**: Production Ready ✅  
+**Architecture**: Modular and Maintainable ✅  
+**Version**: 1.3 (Refactored)

@@ -25,6 +25,7 @@ from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import argparse # Using argparse for better flag handling
 import traceback # For printing stack traces on error
 import inspect # To help build signatures
+import base64  # For GUID handling
 
 import requests
 # Use lxml for XML parsing - consider installing 'defusedxml' for enhanced security
@@ -34,7 +35,7 @@ from dotenv import load_dotenv
 
 # Attempt to import FastMCP - adjust path as needed for your environment
 try:
-    from mcp.server.fastmcp import FastMCP
+    from fastmcp import FastMCP
     import mcp.types as types
     # Conditional print based on initial check for verbose flags
     if '--verbose' in sys.argv or '--debug' in sys.argv:
@@ -87,6 +88,114 @@ NAMESPACES = {
     'atom': 'http://www.w3.org/2005/Atom',
     'app': 'http://www.w3.org/2007/app'
 }
+
+# --- GUID Handling ---
+
+class ODataGUIDHandler:
+    """Handles conversion and optimization of GUID fields in OData responses."""
+    
+    @staticmethod
+    def base64_to_guid(base64_string: str) -> str:
+        """
+        Convert base64 encoded binary GUID to standard GUID format.
+        
+        Args:
+            base64_string: Base64 encoded binary GUID
+            
+        Returns:
+            Standard GUID string format (e.g., '550D1E94-44FB-4E8D-8E5C-8F63E5C20F80')
+        """
+        try:
+            # Decode base64 to bytes
+            guid_bytes = base64.b64decode(base64_string)
+            
+            # Convert to hex and format as GUID
+            hex_string = guid_bytes.hex().upper()
+            
+            # Format as standard GUID: XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+            if len(hex_string) == 32:
+                return f"{hex_string[0:8]}-{hex_string[8:12]}-{hex_string[12:16]}-{hex_string[16:20]}-{hex_string[20:32]}"
+            else:
+                # Return original if not standard GUID length
+                return base64_string
+        except Exception:
+            # Return original on any error
+            return base64_string
+    
+    @staticmethod
+    def guid_to_base64(guid_string: str) -> str:
+        """
+        Convert standard GUID format to base64 encoded binary.
+        
+        Args:
+            guid_string: Standard GUID string
+            
+        Returns:
+            Base64 encoded binary GUID
+        """
+        try:
+            # Remove hyphens and convert to bytes
+            hex_string = guid_string.replace('-', '')
+            guid_bytes = bytes.fromhex(hex_string)
+            
+            # Encode to base64
+            return base64.b64encode(guid_bytes).decode('utf-8')
+        except Exception:
+            # Return original on any error
+            return guid_string
+    
+    @classmethod
+    def optimize_odata_response(cls, response_data: Any, 
+                              guid_fields: List[str] = None,
+                              max_items: int = None) -> Any:
+        """
+        Optimize OData response by converting GUID fields and limiting size.
+        
+        Args:
+            response_data: The OData response data
+            guid_fields: List of field names that contain GUIDs
+            max_items: Maximum number of items to return
+            
+        Returns:
+            Optimized response data
+        """
+        if guid_fields is None:
+            # Common GUID field names in graph models
+            guid_fields = ['Id', 'F', 'T', 'FromId', 'ToId']
+        
+        if isinstance(response_data, dict):
+            # Handle single entity
+            return cls._convert_entity_guids(response_data, guid_fields)
+        elif isinstance(response_data, list):
+            # Handle collection
+            if max_items and len(response_data) > max_items:
+                response_data = response_data[:max_items]
+            return [cls._convert_entity_guids(item, guid_fields) for item in response_data]
+        
+        return response_data
+    
+    @classmethod
+    def _convert_entity_guids(cls, entity: Dict[str, Any], 
+                            guid_fields: List[str]) -> Dict[str, Any]:
+        """Convert GUID fields in a single entity."""
+        optimized = entity.copy()
+        
+        for field in guid_fields:
+            if field in optimized and isinstance(optimized[field], str):
+                # Check if it looks like base64
+                if cls._is_base64(optimized[field]):
+                    optimized[field] = cls.base64_to_guid(optimized[field])
+        
+        return optimized
+    
+    @staticmethod
+    def _is_base64(s: str) -> bool:
+        """Check if a string appears to be base64 encoded."""
+        # Base64 pattern with padding
+        pattern = re.compile(r'^[A-Za-z0-9+/]+={0,2}$')
+        
+        # Check length is multiple of 4 and matches pattern
+        return len(s) % 4 == 0 and bool(pattern.match(s))
 
 # --- Pydantic Models for Metadata ---
 
@@ -497,10 +606,15 @@ class MetadataParser:
 class ODataClient:
     """Client for interacting with an OData v2 service."""
 
-    def __init__(self, metadata: ODataMetadata, auth: Optional[Tuple[str, str]] = None, verbose: bool = False):
+    def __init__(self, metadata: ODataMetadata, auth: Optional[Tuple[str, str]] = None, 
+                 verbose: bool = False, optimize_guids: bool = True,
+                 max_response_items: int = 1000):
         self.metadata = metadata
         self.auth = auth
         self.verbose = verbose # Store verbosity
+        self.optimize_guids = optimize_guids
+        self.max_response_items = max_response_items
+        self.guid_handler = ODataGUIDHandler()
         self.base_url = metadata.service_url
         self.session = requests.Session()
         if auth:
@@ -514,6 +628,9 @@ class ODataClient:
         # SAP specific header for CSRF token handling if needed (add logic later)
         self.csrf_token = None
         self.csrf_cookie = None
+        
+        # Identify GUID fields from metadata
+        self._identify_guid_fields()
 
     def _log_verbose(self, message: str):
         """Prints message to stderr only if verbose mode is enabled."""
@@ -521,6 +638,25 @@ class ODataClient:
              # Add timestamp for debugging context
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
             print(f"[{timestamp} Client VERBOSE] {message}", file=sys.stderr)
+    
+    def _identify_guid_fields(self):
+        """Identify fields that are likely GUIDs based on metadata."""
+        self.guid_fields_by_entity = {}
+        
+        for entity_name, entity_type in self.metadata.entity_types.items():
+            guid_fields = []
+            for prop in entity_type.properties:
+                # Binary fields with GUID-like names
+                if (prop.type == "Edm.Binary" and 
+                    any(name in prop.name.upper() for name in ['ID', 'GUID', 'F', 'T'])):
+                    guid_fields.append(prop.name)
+                # Also check description for GUID hints
+                elif prop.description and 'GUID' in prop.description.upper():
+                    guid_fields.append(prop.name)
+            
+            self.guid_fields_by_entity[entity_name] = guid_fields
+            if guid_fields and self.verbose:
+                self._log_verbose(f"Identified GUID fields for {entity_name}: {guid_fields}")
 
     def _fetch_csrf_token(self):
         """Fetch CSRF token required by some SAP OData services for modifying requests."""
@@ -718,11 +854,16 @@ class ODataClient:
             # Standard OData v2 structure is {"d": ...}
             # Results for collections are often in {"d": {"results": [...]}}
             if 'd' in data:
-                # Return the content of 'd'
-                return data['d']
-            # Sometimes results are directly in root (less common for v2)
-            self._log_verbose(f"Warning: OData response missing 'd' wrapper (keys: {list(data.keys())}). Returning raw response.")
-            return data
+                # Get the content of 'd' and optimize if enabled
+                parsed = data['d']
+            else:
+                # Sometimes results are directly in root (less common for v2)
+                self._log_verbose(f"Warning: OData response missing 'd' wrapper (keys: {list(data.keys())}). Returning raw response.")
+                parsed = data
+            
+            # Optimize the response if enabled
+            return self._optimize_response(parsed, response)
+            
         except json.JSONDecodeError:
             # Error, print regardless of verbosity
             print(f"ERROR: Non-JSON response received despite Accept header (Status: {response.status_code}).", file=sys.stderr)
@@ -731,6 +872,63 @@ class ODataClient:
             # Error, print regardless of verbosity
             print(f"ERROR: Failed to parse OData JSON response: {e}", file=sys.stderr)
             raise ValueError(f"Failed to parse OData response: {e}") from e
+    
+    def _optimize_response(self, data: Any, response: requests.Response) -> Any:
+        """Optimize response data by converting GUIDs and limiting size."""
+        # Skip optimization if disabled
+        if not self.optimize_guids:
+            return data
+        
+        if isinstance(data, dict):
+            # Check if it's a collection response
+            if 'results' in data and isinstance(data['results'], list):
+                # Get entity type from the first result if available
+                entity_type = self._guess_entity_type(data['results'][0] if data['results'] else {})
+                guid_fields = self.guid_fields_by_entity.get(entity_type, [])
+                
+                # Optimize the results
+                optimized_results = self.guid_handler.optimize_odata_response(
+                    data['results'], 
+                    guid_fields=guid_fields,
+                    max_items=self.max_response_items
+                )
+                
+                # Check if we truncated
+                if self.max_response_items and len(data['results']) > self.max_response_items:
+                    data['results'] = optimized_results
+                    data['_truncated'] = True
+                    data['_max_items'] = self.max_response_items
+                else:
+                    data['results'] = optimized_results
+                    
+            else:
+                # Single entity response
+                entity_type = self._guess_entity_type(data)
+                guid_fields = self.guid_fields_by_entity.get(entity_type, [])
+                data = self.guid_handler.optimize_odata_response(data, guid_fields=guid_fields)
+        
+        return data
+    
+    def _guess_entity_type(self, entity_data: Dict[str, Any]) -> Optional[str]:
+        """Guess entity type from entity data structure."""
+        if not entity_data:
+            return None
+        
+        # Check metadata if available
+        if '__metadata' in entity_data and 'type' in entity_data['__metadata']:
+            # Extract entity type from fully qualified name
+            fqn = entity_data['__metadata']['type']
+            return fqn.split('.')[-1] if '.' in fqn else fqn
+        
+        # Otherwise, try to match by properties
+        entity_props = set(entity_data.keys())
+        for entity_type, type_def in self.metadata.entity_types.items():
+            type_props = {prop.name for prop in type_def.properties}
+            # If entity has most of the type's properties, it's likely that type
+            if len(entity_props & type_props) >= len(type_props) * 0.7:
+                return entity_type
+        
+        return None
 
     def _extract_pagination(self, data: Any, response: requests.Response) -> Dict[str, Any]:
         """Extract pagination info from OData v2 response (d.__count, d.__next)."""
@@ -1089,6 +1287,84 @@ class ODataClient:
             print(f"ERROR: Unexpected error during delete {entity_set_name}: {e}", file=sys.stderr)
             raise
 
+    async def list_nodes(self, seed: Optional[int] = None, 
+                        max_nodes: int = 100,
+                        include_guid: bool = False) -> Dict[str, Any]:
+        """
+        Specialized method for listing graph nodes with optimization.
+        
+        Args:
+            seed: Optional seed value to filter by
+            max_nodes: Maximum number of nodes to retrieve
+            include_guid: Whether to include the binary GUID field
+            
+        Returns:
+            Optimized node data
+        """
+        # Build optimized query - select only essential fields by default
+        select_fields = ['Seed', 'Node', 'ObjType', 'ObjName']
+        if include_guid:
+            select_fields.append('Id')
+        
+        params = {
+            '$top': max_nodes,
+            '$select': ','.join(select_fields)
+        }
+        
+        if seed is not None:
+            params['$filter'] = f'Seed eq {seed}'
+        
+        # Use the standard list method
+        result = await self.list_or_filter_entities('ZLLM_00_NODESet', params)
+        
+        # Add query info
+        result['_query_info'] = {
+            'entity_set': 'ZLLM_00_NODESet',
+            'optimized': True,
+            'fields_selected': select_fields
+        }
+        
+        return result
+    
+    async def list_edges(self, seed: Optional[int] = None,
+                        max_edges: int = 100,
+                        include_guids: bool = False) -> Dict[str, Any]:
+        """
+        Specialized method for listing graph edges with optimization.
+        
+        Args:
+            seed: Optional seed value to filter by
+            max_edges: Maximum number of edges to retrieve
+            include_guids: Whether to include the binary GUID fields
+            
+        Returns:
+            Optimized edge data
+        """
+        # Build optimized query - exclude large binary fields by default
+        select_fields = ['Seed', 'Etype']
+        if include_guids:
+            select_fields.extend(['F', 'T'])
+        
+        params = {
+            '$top': max_edges,
+            '$select': ','.join(select_fields)
+        }
+        
+        if seed is not None:
+            params['$filter'] = f'Seed eq {seed}'
+        
+        # Use the standard list method
+        result = await self.list_or_filter_entities('ZLLM_00_EDGESet', params)
+        
+        # Add query info
+        result['_query_info'] = {
+            'entity_set': 'ZLLM_00_EDGESet',
+            'optimized': True,
+            'fields_selected': select_fields
+        }
+        
+        return result
+
     async def invoke_function(self, function_name: str, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
         """Invoke a function import."""
         function_import = self.metadata.function_imports.get(function_name)
@@ -1159,13 +1435,25 @@ class ODataClient:
 class ODataMCPBridge:
     """Bridge between OData and MCP, creating tools from OData metadata."""
 
-    def __init__(self, service_url: str, auth: Optional[Tuple[str, str]] = None, mcp_name: str = "odata-mcp", verbose: bool = False):
+    def __init__(self, service_url: str, auth: Optional[Tuple[str, str]] = None, mcp_name: str = "odata-mcp", verbose: bool = False, 
+                 tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True):
         self.service_url = service_url
         self.auth = auth
         self.verbose = verbose # Store verbosity
         self.mcp = FastMCP(name=mcp_name, timeout=120) # Increased timeout
         self.registered_entity_tools = {}
         self.registered_function_tools = []
+        self.use_postfix = use_postfix
+        
+        # Generate service identifier from service URL
+        service_id = self._generate_service_identifier(service_url)
+        
+        if use_postfix:
+            self.tool_prefix = ""
+            self.tool_postfix = tool_postfix or f"_for_{service_id}"
+        else:
+            self.tool_prefix = tool_prefix or f"{service_id}_"
+            self.tool_postfix = ""
 
         try:
             self._log_verbose("Initializing Metadata Parser...")
@@ -1173,7 +1461,13 @@ class ODataMCPBridge:
             self._log_verbose("Parsing OData Metadata...")
             self.metadata = self.parser.parse()
             self._log_verbose("Metadata Parsed. Initializing OData Client...")
-            self.client = ODataClient(self.metadata, auth, verbose=self.verbose)
+            self.client = ODataClient(
+                self.metadata, 
+                auth, 
+                verbose=self.verbose,
+                optimize_guids=True,  # Enable GUID optimization by default
+                max_response_items=1000  # Limit response size
+            )
             self._log_verbose("OData Client Initialized.")
 
             self._log_verbose("Registering MCP Tools...")
@@ -1193,6 +1487,49 @@ class ODataMCPBridge:
         if self.verbose:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
             print(f"[{timestamp} Bridge VERBOSE] {message}", file=sys.stderr) # Add prefix for clarity
+    
+    def _generate_service_identifier(self, service_url: str) -> str:
+        """Generate a unique service identifier from the service URL."""
+        from urllib.parse import urlparse
+        
+        parsed = urlparse(service_url)
+        
+        # Extract meaningful parts
+        host_parts = parsed.hostname.replace('.', '_') if parsed.hostname else 'localhost'
+        path_parts = parsed.path.strip('/').replace('/', '_').replace('.', '_')
+        
+        # Handle common OData service patterns
+        if 'northwind' in service_url.lower():
+            if 'V4' in service_url:
+                return 'northwind_v4'
+            elif 'V3' in service_url:
+                return 'northwind_v3'
+            elif 'V2' in service_url:
+                return 'northwind_v2'
+            else:
+                return 'northwind'
+        elif 'trippin' in service_url.lower():
+            return 'trippin'
+        elif 'zmcp' in service_url.lower():
+            # Extract SAP service name
+            import re
+            match = re.search(r'/([A-Z][A-Z0-9_]+)_SRV', service_url)
+            if match:
+                return match.group(1).lower()
+            return 'sap_service'
+        elif 'odata_svc' in path_parts.lower() or 'odata' in path_parts.lower():
+            return 'demo_v2'
+        else:
+            # Fallback: use host and first path segment
+            parts = [p for p in [host_parts, path_parts.split('_')[0]] if p]
+            result = '_'.join(parts)[:20]  # Limit length
+            # Ensure it's a valid identifier
+            result = re.sub(r'[^a-zA-Z0-9_]', '_', result)
+            return result.lower() or 'odata'
+    
+    def _make_tool_name(self, base_name: str) -> str:
+        """Generate a tool name with appropriate prefix or postfix."""
+        return f"{self.tool_prefix}{base_name}{self.tool_postfix}"
 
 
     def _format_docstring(self, base_desc: str, params_list: List[Dict[str, Any]], entity_or_func_desc: Optional[str] = None) -> str:
@@ -1381,7 +1718,8 @@ class ODataMCPBridge:
 
     async def _impl_create_entity(self, entity_set_name: str, entity_type: EntityType, **kwargs) -> str:
         """Logic for create entity tool."""
-        required_props = {p.name for p in entity_type.properties if not p.is_key and not p.nullable}
+        # Include all non-nullable properties (including keys) as required
+        required_props = {p.name for p in entity_type.properties if not p.nullable}
         entity_data = {k: v for k, v in kwargs.items() if v is not None}
 
         missing_required = [name for name in required_props if name not in entity_data]
@@ -1495,7 +1833,7 @@ class ODataMCPBridge:
 
             # --- List / Filter Tool ---
             try:
-                tool_name = f"filter_{es_name}"
+                tool_name = self._make_tool_name(f"filter_{es_name}")
                 params = [
                     {'name': 'filter', 'type_hint': 'Optional[str]', 'required': False, 'description': "OData $filter expression"},
                     {'name': 'select', 'type_hint': 'Optional[str]', 'required': False, 'description': "Comma-separated properties to return"},
@@ -1522,7 +1860,7 @@ class ODataMCPBridge:
 
             # --- Count Tool ---
             try:
-                tool_name = f"count_{es_name}"
+                tool_name = self._make_tool_name(f"count_{es_name}")
                 params = [{'name': 'filter', 'type_hint': 'Optional[str]', 'required': False, 'description': "OData $filter expression"}]
                 base_desc = f"Get the total count of {entity_type.name} entities in the '{es_name}' set."
                 doc = self._format_docstring(base_desc, params, entity_set.description)
@@ -1539,7 +1877,7 @@ class ODataMCPBridge:
 
             # --- Search Tool ---
             try:
-                tool_name = f"search_{es_name}"
+                tool_name = self._make_tool_name(f"search_{es_name}")
                 params = [
                     {'name': 'search_term', 'type_hint': 'str', 'required': True, 'description': "Text term(s) to search for"},
                     {'name': 'top', 'type_hint': 'Optional[int]', 'required': False, 'description': "Maximum number of entities"},
@@ -1563,7 +1901,7 @@ class ODataMCPBridge:
             key_props = entity_type.get_key_properties()
             if key_props:
                  try:
-                    tool_name = f"get_{es_name}"
+                    tool_name = self._make_tool_name(f"get_{es_name}")
                     params = self._get_param_defs_for_keys(key_props)
                     # Add optional expand parameter
                     params.append({'name': 'expand', 'type_hint': 'Optional[str]', 'required': False, 'description': "Navigation properties to expand"})
@@ -1585,9 +1923,9 @@ class ODataMCPBridge:
             # --- CRUD Tools (conditional) ---
             if entity_set.creatable:
                 try:
-                    tool_name = f"create_{es_name}"
-                    # Params are non-key properties, required based on nullability
-                    params = self._get_param_defs([p for p in entity_type.properties if not p.is_key])
+                    tool_name = self._make_tool_name(f"create_{es_name}")
+                    # Include ALL properties for create (including keys that may need to be specified)
+                    params = self._get_param_defs(entity_type.properties)
                     base_desc = f"Create a new {entity_type.name} entity in the '{es_name}' set."
                     doc = self._format_docstring(base_desc, params, entity_set.description)
                     # Capture current instance, entity_set_name and entity_type in closure
@@ -1604,7 +1942,7 @@ class ODataMCPBridge:
 
             if entity_set.updatable and key_props: # Need keys to update
                 try:
-                    tool_name = f"update_{es_name}"
+                    tool_name = self._make_tool_name(f"update_{es_name}")
                     # Params are keys (required) + non-keys (optional)
                     key_params = self._get_param_defs_for_keys(key_props)
                     data_params = self._get_param_defs([p for p in entity_type.properties if not p.is_key], required_override=False) # All data params optional for MERGE/PATCH
@@ -1625,7 +1963,7 @@ class ODataMCPBridge:
 
             if entity_set.deletable and key_props: # Need keys to delete
                  try:
-                    tool_name = f"delete_{es_name}"
+                    tool_name = self._make_tool_name(f"delete_{es_name}")
                     params = self._get_param_defs_for_keys(key_props)
                     base_desc = f"Delete a {entity_type.name} entity from '{es_name}' using its unique key(s)."
                     doc = self._format_docstring(base_desc, params, entity_set.description)
@@ -1655,7 +1993,8 @@ class ODataMCPBridge:
                      return logic
                  logic = make_logic(self, func_name, func_import)
 
-                 registered_name = self._create_and_register_tool(func_name, params, doc, logic)
+                 tool_name = self._make_tool_name(func_name)
+                 registered_name = self._create_and_register_tool(tool_name, params, doc, logic)
                  if registered_name: self.registered_function_tools.append(registered_name)
             except Exception as e: print(f"ERROR registering function {func_name}: {e}", file=sys.stderr)
 
@@ -1663,7 +2002,7 @@ class ODataMCPBridge:
         # --- Log Summary (only if verbose) ---
         if self.verbose:
             print("\n--- Registered Tools Summary ---", file=sys.stderr)
-            print(f"- Service Info: odata_service_info", file=sys.stderr)
+            print(f"- Service Info: {self._make_tool_name('odata_service_info')}", file=sys.stderr)
             for es_name, tools in self.registered_entity_tools.items():
                 if tools:
                     print(f"- Entity Set '{es_name}': {', '.join(sorted(tools))}", file=sys.stderr)
@@ -1748,9 +2087,10 @@ class ODataMCPBridge:
 
 
         try:
-            # Register tool WITHOUT fn_args
-            self.mcp.add_tool(odata_service_info, name="odata_service_info")
-            self._log_verbose("Registered tool: odata_service_info")
+            # Register tool with appropriate naming
+            tool_name = self._make_tool_name("odata_service_info")
+            self.mcp.add_tool(odata_service_info, name=tool_name)
+            self._log_verbose(f"Registered tool: {tool_name}")
         except Exception as e:
              # Error, print regardless of verbosity
             print(f"ERROR: Error registering odata_service_info tool: {e}", file=sys.stderr)
@@ -1784,6 +2124,10 @@ def main():
     parser.add_argument("-p", "--password", help="Password for basic authentication (overrides ODATA_PASSWORD env var)")
     # Allow --debug as alias for --verbose
     parser.add_argument("-v", "--verbose", "--debug", dest="verbose", action="store_true", help="Enable verbose output to stderr")
+    # Tool naming options
+    parser.add_argument("--tool-prefix", help="Custom prefix for tool names (use with --no-postfix)")
+    parser.add_argument("--tool-postfix", help="Custom postfix for tool names (default: _for_<service_id>)")
+    parser.add_argument("--no-postfix", action="store_true", help="Use prefix instead of postfix for tool naming")
 
     args = parser.parse_args()
 
@@ -1805,11 +2149,11 @@ def main():
 
     # 3. Environment Variables (loaded by load_dotenv)
     if service_url is None:
-        service_url = os.getenv("ODATA_SERVICE_URL")
-        if service_url and args.verbose: print("[VERBOSE] Using ODATA_SERVICE_URL from environment.", file=sys.stderr)
+        service_url = os.getenv("ODATA_URL")
+        if service_url and args.verbose: print("[VERBOSE] Using ODATA_URL from environment.", file=sys.stderr)
 
-    env_user = os.getenv("ODATA_USERNAME")
-    env_pass = os.getenv("ODATA_PASSWORD")
+    env_user = os.getenv("ODATA_USER")
+    env_pass = os.getenv("ODATA_PASS")
 
     # Determine final user/pass based on priority: CLI args > Env Vars
     final_user = args.user if args.user is not None else env_user
@@ -1827,7 +2171,7 @@ def main():
     if not service_url:
         # Error, print regardless of verbosity
         print("ERROR: OData service URL not provided.", file=sys.stderr)
-        print("Provide it via the --service flag, as a positional argument, or ODATA_SERVICE_URL environment variable.", file=sys.stderr)
+        print("Provide it via the --service flag, as a positional argument, or ODATA_URL environment variable.", file=sys.stderr)
         parser.print_help(file=sys.stderr) # Show help message
         sys.exit(1)
 
@@ -1843,8 +2187,15 @@ def main():
 
     # Create and run the bridge
     try:
-        # Pass verbose flag to the bridge and underlying classes
-        bridge = ODataMCPBridge(service_url, auth, verbose=args.verbose)
+        # Pass verbose flag and tool naming options to the bridge
+        bridge = ODataMCPBridge(
+            service_url, 
+            auth, 
+            verbose=args.verbose,
+            tool_prefix=args.tool_prefix,
+            tool_postfix=args.tool_postfix,
+            use_postfix=not args.no_postfix
+        )
         bridge.run()
     except Exception as e:
         # Fatal error, print regardless of verbosity

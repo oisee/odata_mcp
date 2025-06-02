@@ -18,8 +18,16 @@ import requests
 from io import StringIO
 
 # Import the module to test
-import odata_mcp
-from odata_mcp import MetadataParser, ODataClient, ODataMCPBridge, ODataMetadata, EntityType, EntityProperty, EntitySet, FunctionImport
+from odata_mcp_lib import (
+    MetadataParser, 
+    ODataClient, 
+    ODataMCPBridge, 
+    ODataMetadata, 
+    EntityType, 
+    EntityProperty, 
+    EntitySet, 
+    FunctionImport
+)
 
 # Load environment variables
 from dotenv import load_dotenv

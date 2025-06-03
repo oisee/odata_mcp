@@ -23,6 +23,7 @@ except ImportError:
 from .models import EntityProperty, EntityType, FunctionImport
 from .metadata_parser import MetadataParser
 from .client import ODataClient
+from .name_shortener import NameShortener
 
 
 class ODataMCPBridge:
@@ -39,6 +40,9 @@ class ODataMCPBridge:
         self.registered_function_tools = []
         self.use_postfix = use_postfix
         
+        # Initialize name shortener
+        self.name_shortener = NameShortener(aggressive=tool_shrink)
+        
         # Generate service identifier from service URL (after setting tool_shrink)
         service_id = self._generate_service_identifier(service_url)
         
@@ -49,10 +53,9 @@ class ODataMCPBridge:
             else:
                 # Apply shrinking to default postfix if enabled
                 if tool_shrink:
-                    # For shrink mode: use 4 letters from longest word in service name
-                    service_parts = service_id.split('_')
-                    longest_word = max(service_parts, key=len) if service_parts else service_id
-                    self.tool_postfix = f"_{longest_word[:4].lower()}" if len(longest_word) > 4 else f"_{longest_word.lower()}"
+                    # Use name shortener for service name
+                    short_service = self.name_shortener.shorten_service_name(service_id, max_length=4)
+                    self.tool_postfix = f"_{short_service}"
                 else:
                     self.tool_postfix = f"_for_{service_id}"
         else:
@@ -139,35 +142,6 @@ class ODataMCPBridge:
         # Ultimate fallback
         return 'od'
     
-    def _shrink_entity_name(self, entity_name: str) -> str:
-        """Shrink entity name progressively to fit within constraints."""
-        # Remove common prefixes/namespaces
-        parts = entity_name.split('_')
-        
-        # Filter out common SAP/OData prefixes
-        filtered_parts = []
-        skip_prefixes = {'BPCM', 'CV', 'ASH', 'FRA', 'IV', 'C', 'I', 'E', 'Z'}
-        
-        for part in parts:
-            if part.upper() not in skip_prefixes and len(part) > 1:
-                filtered_parts.append(part)
-        
-        if filtered_parts:
-            # Try different strategies
-            # 1. Use the longest meaningful word
-            longest = max(filtered_parts, key=len)
-            
-            # Remove common suffixes
-            for suffix in ['Type', 'Set', 'Collection', 'Entity']:
-                if longest.endswith(suffix) and len(longest) > len(suffix) + 3:
-                    longest = longest[:-len(suffix)]
-                    break
-            
-            return longest
-        
-        # Fallback: use original name truncated
-        return entity_name[:10]
-    
     def _apply_tool_shrink(self, base_name: str) -> str:
         """Apply tool name shortening rules."""
         parts = base_name.split('_', 1)
@@ -190,58 +164,38 @@ class ODataMCPBridge:
         
         short_op = operation_map.get(operation, operation[:4])
         
-        # Shorten entity name
-        shortened_entity = self._shrink_entity_name(entity_name)
+        # Use the new name shortener for entity names
+        shortened_entity = self.name_shortener.shorten_entity_name(entity_name)
         new_base = f"{short_op}_{shortened_entity}"
-        
-        # Check if we need further shortening
-        estimated_length = len(self.tool_prefix) + len(new_base) + len(self.tool_postfix)
-        
-        if estimated_length > 60:  # Leave some margin
-            # Progressive shortening of entity name
-            if len(shortened_entity) > 10:
-                shortened_entity = shortened_entity[:10]
-                new_base = f"{short_op}_{shortened_entity}"
         
         return new_base
     
     def _make_tool_name(self, base_name: str) -> str:
         """Generate a tool name with appropriate prefix or postfix, ensuring max 64 chars."""
-        # Apply tool shrinking if enabled
-        if self.tool_shrink:
+        # Check if we need to apply shrinking
+        full_name_test = f"{self.tool_prefix}{base_name}{self.tool_postfix}"
+        
+        # Auto-shrink if name is too long (even without --tool-shrink flag)
+        if self.tool_shrink or self.name_shortener.should_auto_shrink(full_name_test, threshold=60):
             base_name = self._apply_tool_shrink(base_name)
         
         full_name = f"{self.tool_prefix}{base_name}{self.tool_postfix}"
         
-        if len(full_name) <= 64:
-            return full_name
-            
-        # Truncate with compact naming strategy
-        max_base = 64 - len(self.tool_prefix) - len(self.tool_postfix)
-        if max_base <= 0:
-            # Prefix/postfix too long, use minimal naming
-            if self.use_postfix:
-                return f"{base_name[:60]}_svc"
-            else:
-                return f"svc_{base_name[:60]}"
-        
-        # Truncate base name intelligently
-        if max_base < len(base_name):
-            # Try to preserve operation prefix and entity name core
-            parts = base_name.split('_', 1)
-            if len(parts) == 2:
-                op, entity = parts
-                remaining = max_base - len(op) - 1  # -1 for underscore
-                if remaining > 8:  # Keep reasonable entity name length
-                    truncated_base = f"{op}_{entity[:remaining]}"
+        # Final safety check - should rarely be needed with new algorithm
+        if len(full_name) > 64:
+            # Emergency truncation
+            max_base = 64 - len(self.tool_prefix) - len(self.tool_postfix)
+            if max_base > 0:
+                parts = base_name.split('_', 1)
+                if len(parts) == 2:
+                    op, entity = parts
+                    remaining = max_base - len(op) - 1
+                    base_name = f"{op}_{entity[:remaining]}"
                 else:
-                    truncated_base = base_name[:max_base]
-            else:
-                truncated_base = base_name[:max_base]
-        else:
-            truncated_base = base_name
+                    base_name = base_name[:max_base]
+            full_name = f"{self.tool_prefix}{base_name}{self.tool_postfix}"
             
-        return f"{self.tool_prefix}{truncated_base}{self.tool_postfix}"
+        return full_name
 
     def _format_docstring(self, base_desc: str, params_list: List[Dict[str, Any]], entity_or_func_desc: Optional[str] = None) -> str:
         """Create a formatted docstring for a tool from a list of parameter dicts."""

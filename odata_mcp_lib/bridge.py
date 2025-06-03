@@ -82,52 +82,82 @@ class ODataMCPBridge:
             print(f"[{timestamp} Bridge VERBOSE] {message}", file=sys.stderr)
     
     def _generate_service_identifier(self, service_url: str) -> str:
-        """Generate a unique service identifier from the service URL."""
+        """Generate a compact service identifier from the service URL."""
         parsed = urlparse(service_url)
         
-        # Handle common OData service patterns - keep it simple
-        
         # Pattern 1: SAP OData services like /sap/opu/odata/sap/ZODD_000_SRV
-        # Keep the full service name: ZODD_000_SRV -> ZODD_000_SRV
-        match = re.search(r'/([A-Z][A-Z0-9_]+_SRV)', service_url, re.IGNORECASE)
+        # Use shorter version: ZODD_000_SRV -> Z000 (first letter + numbers)
+        match = re.search(r'/([A-Z][A-Z0-9_]*_SRV)', service_url, re.IGNORECASE)
         if match:
-            return match.group(1)
+            svc_name = match.group(1)
+            # Extract compact form: take first char + first numbers found
+            compact = re.search(r'^([A-Z])[A-Z]*_?(\d+)', svc_name)
+            if compact:
+                return f"{compact.group(1)}{compact.group(2)}"
+            return svc_name[:8]  # Max 8 chars
         
-        # Pattern 2: .svc endpoints like /MyService.svc -> MyService_svc
+        # Pattern 2: .svc endpoints like /MyService.svc -> MySvc
         match = re.search(r'/([A-Za-z][A-Za-z0-9_]+)\.svc', service_url)
         if match:
-            return f"{match.group(1)}_svc"
+            name = match.group(1)
+            return f"{name[:5]}Svc" if len(name) > 5 else f"{name}Svc"
         
-        # Pattern 3: Generic service name from path like /odata/TestService -> TestService
+        # Pattern 3: Generic service name from path like /odata/TestService -> Test
         match = re.search(r'/odata/([A-Za-z][A-Za-z0-9_]+)', service_url)
         if match:
-            return match.group(1)
+            return match.group(1)[:8]
         
-        # Pattern 4: Host-based like service.example.com -> service_example_com
+        # Pattern 4: Host-based like service.example.com -> svc_ex
         if parsed.hostname:
-            # Replace dots with underscores, keep the full hostname
-            clean_hostname = re.sub(r'[^a-zA-Z0-9_]', '_', parsed.hostname)
-            # Remove leading/trailing underscores and multiple consecutive underscores
-            clean_hostname = re.sub(r'_+', '_', clean_hostname).strip('_')
-            if clean_hostname and clean_hostname != 'localhost':
-                return clean_hostname
+            parts = parsed.hostname.split('.')
+            if len(parts) >= 2 and parts[0] != 'localhost':
+                return f"{parts[0][:3]}_{parts[1][:2]}"
         
-        # Pattern 5: Extract last meaningful path segment
+        # Pattern 5: Extract last meaningful path segment  
         path_segments = [p for p in parsed.path.split('/') if p and p not in ['api', 'odata', 'sap', 'opu']]
         if path_segments:
             last_segment = path_segments[-1]
-            # Keep original case and replace special chars with underscores
             clean_segment = re.sub(r'[^a-zA-Z0-9_]', '_', last_segment)
             clean_segment = re.sub(r'_+', '_', clean_segment).strip('_')
             if len(clean_segment) > 1:
-                return clean_segment
+                return clean_segment[:8]
         
         # Ultimate fallback
-        return 'odata'
+        return 'od'
     
     def _make_tool_name(self, base_name: str) -> str:
-        """Generate a tool name with appropriate prefix or postfix."""
-        return f"{self.tool_prefix}{base_name}{self.tool_postfix}"
+        """Generate a tool name with appropriate prefix or postfix, ensuring max 64 chars."""
+        full_name = f"{self.tool_prefix}{base_name}{self.tool_postfix}"
+        
+        if len(full_name) <= 64:
+            return full_name
+            
+        # Truncate with compact naming strategy
+        max_base = 64 - len(self.tool_prefix) - len(self.tool_postfix)
+        if max_base <= 0:
+            # Prefix/postfix too long, use minimal naming
+            if self.use_postfix:
+                return f"{base_name[:60]}_svc"
+            else:
+                return f"svc_{base_name[:60]}"
+        
+        # Truncate base name intelligently
+        if max_base < len(base_name):
+            # Try to preserve operation prefix and entity name core
+            parts = base_name.split('_', 1)
+            if len(parts) == 2:
+                op, entity = parts
+                remaining = max_base - len(op) - 1  # -1 for underscore
+                if remaining > 8:  # Keep reasonable entity name length
+                    truncated_base = f"{op}_{entity[:remaining]}"
+                else:
+                    truncated_base = base_name[:max_base]
+            else:
+                truncated_base = base_name[:max_base]
+        else:
+            truncated_base = base_name
+            
+        return f"{self.tool_prefix}{truncated_base}{self.tool_postfix}"
 
     def _format_docstring(self, base_desc: str, params_list: List[Dict[str, Any]], entity_or_func_desc: Optional[str] = None) -> str:
         """Create a formatted docstring for a tool from a list of parameter dicts."""

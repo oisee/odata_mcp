@@ -39,7 +39,6 @@ class ODataClient:
         })
         # SAP specific header for CSRF token handling if needed
         self.csrf_token = None
-        self.csrf_cookie = None
         
         # Identify GUID fields from metadata
         self._identify_guid_fields()
@@ -74,85 +73,100 @@ class ODataClient:
         """Fetch CSRF token required by some SAP OData services for modifying requests."""
         self._log_verbose("Fetching CSRF token...")
         try:
-            # Fetch token using a non-modifying request (e.g., GET metadata)
-            # Use service document URL which is usually simpler/faster
-            headers = {'X-CSRF-Token': 'Fetch', 'Accept': 'application/json'}  # Prefer JSON for response if any
-            response = self.session.get(self.metadata.service_url, headers=headers, params={'$top': 0})  # Light request
-            response.raise_for_status()
-
-            self.csrf_token = response.headers.get('X-CSRF-Token')
-            # Store relevant cookies needed to send back with the token
-            self.csrf_cookie = response.cookies  # requests manages cookies by default, but store if needed explicitly
-
-            if self.csrf_token:
-                self._log_verbose(f"CSRF token fetched successfully.")
-            else:
-                # This is a potential issue, warn regardless of verbosity? Let's make it verbose for now.
-                self._log_verbose("Warning: No CSRF token returned by service. Modifying operations might fail.")
-
-        except requests.exceptions.RequestException as e:
-            # Warning, print only if verbose
-            if self.verbose:
-                print(f"Warning: Could not fetch CSRF token: {e}. Modifying operations might fail.", file=sys.stderr)
-            self.csrf_token = None  # Ensure token is None if fetch fails
-            self.csrf_cookie = None
-        except Exception as e:
-            # Unexpected error, print only if verbose
-            if self.verbose:
-                print(f"Warning: Unexpected error fetching CSRF token: {e}", file=sys.stderr)
+            # Use service root URL for CSRF token fetch
+            service_root = self.metadata.service_url.rstrip('/')
+            
+            # Clear any existing CSRF token
             self.csrf_token = None
-            self.csrf_cookie = None
+            
+            self._log_verbose(f"Attempting CSRF token fetch from service root: {service_root}")
+            
+            # Create headers for CSRF fetch - minimal set as per SAP standard
+            csrf_headers = {
+                'X-CSRF-Token': 'Fetch'
+            }
+            
+            # Use GET request to service root to fetch CSRF token
+            # Let session handle auth and existing cookies
+            response = self.session.get(service_root, headers=csrf_headers, timeout=30)
+            
+            # Check for CSRF token in response headers (case-insensitive)
+            csrf_token = None
+            for header_name, header_value in response.headers.items():
+                if header_name.lower() == 'x-csrf-token':
+                    csrf_token = header_value
+                    break
+            
+            if csrf_token and csrf_token.lower() not in ['fetch', 'required']:
+                self.csrf_token = csrf_token
+                self._log_verbose(f"CSRF token fetched successfully: {csrf_token[:20]}...")
+                return True
+            else:
+                self._log_verbose(f"No valid CSRF token from {service_root} (got: '{csrf_token}')")
+                return False
+            
+        except requests.exceptions.RequestException as req_e:
+            self._log_verbose(f"Failed to fetch CSRF token: {req_e}")
+            return False
+        except Exception as e:
+            self._log_verbose(f"Unexpected error fetching CSRF token: {e}")
+            return False
 
     def _make_request(self, method: str, url: str, requires_csrf: bool = False, **kwargs) -> requests.Response:
         """Internal helper to make requests, handling CSRF."""
-        # Ensure CSRF is fetched only once initially if required for modifying methods
         modifying_methods = ['POST', 'PUT', 'MERGE', 'PATCH', 'DELETE']
         is_modifying = method.upper() in modifying_methods
 
-        # If modifying and requires CSRF (usually true for SAP), ensure token exists
-        if is_modifying and requires_csrf and not self.csrf_token:
-            self._fetch_csrf_token()  # Attempt to fetch if needed and not present
+        # For modifying operations that require CSRF, always fetch a fresh token
+        if is_modifying and requires_csrf:
+            if not self._fetch_csrf_token():
+                self._log_verbose("Failed to fetch CSRF token, proceeding without it")
 
-        # Merge headers, prioritize kwargs headers
-        request_headers = self.session.headers.copy()  # Start with session defaults
+        # Prepare headers
+        request_headers = self.session.headers.copy()
         if 'headers' in kwargs:
             request_headers.update(kwargs.pop('headers'))
 
-        # Add CSRF token if required and available
+        # Add CSRF token if we have one
         if is_modifying and requires_csrf and self.csrf_token:
             request_headers['X-CSRF-Token'] = self.csrf_token
+            self._log_verbose(f"Adding CSRF token to request: {self.csrf_token[:20]}...")
 
         kwargs['headers'] = request_headers
 
-        response = self.session.request(method, url, **kwargs)
+        # Make the request
+        try:
+            response = self.session.request(method, url, **kwargs)
+        except Exception as e:
+            self._log_verbose(f"Request failed with exception: {e}")
+            raise
 
-        # Handle CSRF token expiry (often 403 Forbidden with specific message/header)
-        # Check X-CSRF-Token header in response too, SAP might signal expiry there
-        csrf_required_header = response.headers.get('x-csrf-token', '').lower()
-
-        # Condition for retry: 403 status and (required header present or specific text in body)
-        needs_csrf_retry = (
+        # Handle CSRF token issues
+        csrf_failed = (
             response.status_code == 403 and
-            is_modifying and  # Only retry modifying requests
-            (csrf_required_header == 'required' or 'CSRF token validation failed' in response.text)
+            is_modifying and requires_csrf and
+            ('CSRF token validation failed' in response.text or
+             'csrf' in response.text.lower() or
+             response.headers.get('x-csrf-token', '').lower() == 'required')
         )
 
-        if needs_csrf_retry:
-            self._log_verbose("CSRF token seems invalid/expired. Refetching...")
-            self._fetch_csrf_token()  # Fetch a new token
-            if self.csrf_token:
-                # Retry the request with the new token
+        if csrf_failed and not hasattr(response, '_csrf_retry_attempted'):
+            self._log_verbose("CSRF token validation failed, attempting to refetch...")
+            # Clear the invalid token
+            self.csrf_token = None
+            if self._fetch_csrf_token():
+                # Mark this response to avoid infinite retry
+                response._csrf_retry_attempted = True
                 request_headers['X-CSRF-Token'] = self.csrf_token
                 kwargs['headers'] = request_headers
-
+                
                 self._log_verbose("Retrying request with new CSRF token...")
                 response = self.session.request(method, url, **kwargs)
             else:
-                # Error, print regardless of verbosity
-                print("ERROR: Failed to refetch CSRF token. Request aborted.", file=sys.stderr)
-                # We should probably raise an exception here instead of returning the 403
-                # Re-create the original exception context if possible
-                raise requests.exceptions.RequestException(f"CSRF token required and refetch failed.", response=response)
+                error_detail = f"CSRF token required but refetch failed. Status: {response.status_code}"
+                if response.text:
+                    error_detail += f". Response: {response.text[:500]}"
+                raise requests.exceptions.RequestException(error_detail, response=response)
 
         return response
 
@@ -656,7 +670,7 @@ class ODataClient:
         if not entity_set.creatable: raise ValueError(f"Entity set {entity_set_name} not configured as creatable.")
 
         url = f"{self.base_url}/{entity_set_name}"
-        params = {'$format': 'json'}  # Add format to query params for POST
+        params = {}  # No query params for POST
 
         try:
             self._log_verbose(f"Requesting: POST {url} with data {entity_data}")
@@ -696,7 +710,7 @@ class ODataClient:
 
         key_str = self._build_key_string(entity_type, key_values)
         url = f"{self.base_url}/{entity_set_name}{key_str}"
-        params = {'$format': 'json'}  # Add format to query params
+        params = {}  # No query params for MERGE/PUT/PATCH
 
         try:
             # Prefer MERGE for partial updates (standard in OData v2/v3)

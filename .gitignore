@@ -1,6 +1,7 @@
 *.env
 *.pyc
 __pycache__/*
+__pycache__
 *.pyo
 *.pyd
 *.db
@@ -14,3 +15,4 @@ __pycache__/*
 .idea/
 .DS_Store
 .claude/
+cookie*.txt

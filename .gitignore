@@ -17,3 +17,6 @@ __pycache__
 .claude/
 .claude/*
 cookie*.txt
+cookie.txt
+cookie*
+test_cookie*

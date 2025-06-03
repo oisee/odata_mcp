@@ -896,10 +896,21 @@ class ODataClient:
                 # Add function parameters to query string for GET
                 current_query = {}
                 for key, value in odata_params.items():
-                    # Simple string conversion for query params, handle boolean correctly
-                    py_type = next((p.get_python_type() for p in function_import.parameters if p.name == key), str)
+                    # Find the parameter definition to get its type
+                    param_def = next((p for p in function_import.parameters if p.name == key), None)
+                    if param_def:
+                        py_type = param_def.get_python_type()
+                    else:
+                        py_type = str  # Default to string if parameter not found
+                    
+                    # Format value according to OData conventions
                     if py_type == bool:
                         current_query[key] = str(value).lower()
+                    elif py_type == str:
+                        # String values must be enclosed in single quotes for OData
+                        # Escape single quotes by doubling them
+                        str_value = str(value).replace("'", "''")
+                        current_query[key] = f"'{str_value}'"
                     # Add handling for other types if needed (e.g., dates)
                     else:
                         current_query[key] = str(value)

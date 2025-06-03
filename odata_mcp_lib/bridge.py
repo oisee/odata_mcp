@@ -29,21 +29,32 @@ class ODataMCPBridge:
     """Bridge between OData and MCP, creating tools from OData metadata."""
 
     def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, mcp_name: str = "odata-mcp", verbose: bool = False, 
-                 tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True):
+                 tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True, tool_shrink: bool = False):
         self.service_url = service_url
         self.auth = auth
         self.verbose = verbose
+        self.tool_shrink = tool_shrink
         self.mcp = FastMCP(name=mcp_name, timeout=120)  # Increased timeout
         self.registered_entity_tools = {}
         self.registered_function_tools = []
         self.use_postfix = use_postfix
         
-        # Generate service identifier from service URL
+        # Generate service identifier from service URL (after setting tool_shrink)
         service_id = self._generate_service_identifier(service_url)
         
         if use_postfix:
             self.tool_prefix = ""
-            self.tool_postfix = tool_postfix or f"_for_{service_id}"
+            if tool_postfix:
+                self.tool_postfix = tool_postfix
+            else:
+                # Apply shrinking to default postfix if enabled
+                if tool_shrink:
+                    # For shrink mode: use 4 letters from longest word in service name
+                    service_parts = service_id.split('_')
+                    longest_word = max(service_parts, key=len) if service_parts else service_id
+                    self.tool_postfix = f"_{longest_word[:4].lower()}" if len(longest_word) > 4 else f"_{longest_word.lower()}"
+                else:
+                    self.tool_postfix = f"_for_{service_id}"
         else:
             self.tool_prefix = tool_prefix or f"{service_id}_"
             self.tool_postfix = ""
@@ -85,11 +96,14 @@ class ODataMCPBridge:
         """Generate a compact service identifier from the service URL."""
         parsed = urlparse(service_url)
         
-        # Pattern 1: SAP OData services like /sap/opu/odata/sap/ZODD_000_SRV
+        # Pattern 1: SAP OData services like /sap/opu/odata/sap/ZODD_000_SRV or BPCM_ADDRESS_SCREENING_HITS_SRV
         # Use shorter version: ZODD_000_SRV -> Z000 (first letter + numbers)
         match = re.search(r'/([A-Z][A-Z0-9_]*_SRV)', service_url, re.IGNORECASE)
         if match:
             svc_name = match.group(1)
+            # For tool_shrink mode, return full name to extract longest word later
+            if hasattr(self, 'tool_shrink') and self.tool_shrink:
+                return svc_name
             # Extract compact form: take first char + first numbers found
             compact = re.search(r'^([A-Z])[A-Z]*_?(\d+)', svc_name)
             if compact:
@@ -125,8 +139,78 @@ class ODataMCPBridge:
         # Ultimate fallback
         return 'od'
     
+    def _shrink_entity_name(self, entity_name: str) -> str:
+        """Shrink entity name progressively to fit within constraints."""
+        # Remove common prefixes/namespaces
+        parts = entity_name.split('_')
+        
+        # Filter out common SAP/OData prefixes
+        filtered_parts = []
+        skip_prefixes = {'BPCM', 'CV', 'ASH', 'FRA', 'IV', 'C', 'I', 'E', 'Z'}
+        
+        for part in parts:
+            if part.upper() not in skip_prefixes and len(part) > 1:
+                filtered_parts.append(part)
+        
+        if filtered_parts:
+            # Try different strategies
+            # 1. Use the longest meaningful word
+            longest = max(filtered_parts, key=len)
+            
+            # Remove common suffixes
+            for suffix in ['Type', 'Set', 'Collection', 'Entity']:
+                if longest.endswith(suffix) and len(longest) > len(suffix) + 3:
+                    longest = longest[:-len(suffix)]
+                    break
+            
+            return longest
+        
+        # Fallback: use original name truncated
+        return entity_name[:10]
+    
+    def _apply_tool_shrink(self, base_name: str) -> str:
+        """Apply tool name shortening rules."""
+        parts = base_name.split('_', 1)
+        if len(parts) != 2:
+            return base_name
+        
+        operation, entity_name = parts
+        
+        # Shorten operation prefixes
+        operation_map = {
+            'create': 'crt',
+            'get': 'get',
+            'update': 'upd',
+            'delete': 'del',
+            'search': 'srch',
+            'filter': 'fltr',
+            'count': 'cnt',
+            'invoke': 'call'
+        }
+        
+        short_op = operation_map.get(operation, operation[:4])
+        
+        # Shorten entity name
+        shortened_entity = self._shrink_entity_name(entity_name)
+        new_base = f"{short_op}_{shortened_entity}"
+        
+        # Check if we need further shortening
+        estimated_length = len(self.tool_prefix) + len(new_base) + len(self.tool_postfix)
+        
+        if estimated_length > 60:  # Leave some margin
+            # Progressive shortening of entity name
+            if len(shortened_entity) > 10:
+                shortened_entity = shortened_entity[:10]
+                new_base = f"{short_op}_{shortened_entity}"
+        
+        return new_base
+    
     def _make_tool_name(self, base_name: str) -> str:
         """Generate a tool name with appropriate prefix or postfix, ensuring max 64 chars."""
+        # Apply tool shrinking if enabled
+        if self.tool_shrink:
+            base_name = self._apply_tool_shrink(base_name)
+        
         full_name = f"{self.tool_prefix}{base_name}{self.tool_postfix}"
         
         if len(full_name) <= 64:

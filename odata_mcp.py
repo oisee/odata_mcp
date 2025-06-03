@@ -86,6 +86,7 @@ def main():
     parser.add_argument("--tool-prefix", help="Custom prefix for tool names (use with --no-postfix)")
     parser.add_argument("--tool-postfix", help="Custom postfix for tool names (default: _for_<service_id>)")
     parser.add_argument("--no-postfix", action="store_true", help="Use prefix instead of postfix for tool naming")
+    parser.add_argument("--tool-shrink", action="store_true", help="Use shortened tool names (crt_, get_, upd_, del_, srch_, fltr_)")
 
     args = parser.parse_args()
 
@@ -192,7 +193,8 @@ def main():
             verbose=args.verbose,
             tool_prefix=args.tool_prefix,
             tool_postfix=args.tool_postfix,
-            use_postfix=not args.no_postfix
+            use_postfix=not args.no_postfix,
+            tool_shrink=args.tool_shrink
         )
         bridge.run()
     except Exception as e:

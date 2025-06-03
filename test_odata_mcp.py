@@ -28,6 +28,7 @@ from odata_mcp_lib import (
     EntitySet, 
     FunctionImport
 )
+from odata_mcp import load_cookies_from_file, parse_cookie_string
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -65,9 +66,9 @@ class TestMetadataParser(unittest.TestCase):
         if self.username and self.password:
             self.auth = (self.username, self.password)
     
-    @patch('odata_mcp.MetadataParser._parse_entity_types')
-    @patch('odata_mcp.MetadataParser._parse_entity_sets')
-    @patch('odata_mcp.MetadataParser._parse_function_imports')
+    @patch('odata_mcp_lib.metadata_parser.MetadataParser._parse_entity_types')
+    @patch('odata_mcp_lib.metadata_parser.MetadataParser._parse_entity_sets')
+    @patch('odata_mcp_lib.metadata_parser.MetadataParser._parse_function_imports')
     @patch('requests.Session.get')
     def test_parse_metadata_success(self, mock_get, mock_parse_functions, mock_parse_sets, mock_parse_types):
         """Test successful metadata parsing with mocked responses."""
@@ -99,6 +100,115 @@ class TestMetadataParser(unittest.TestCase):
         mock_parse_types.assert_called_once()
         mock_parse_sets.assert_called_once()
         mock_parse_functions.assert_called_once()
+
+
+class TestCookieAuthentication(unittest.TestCase):
+    """Tests for cookie authentication functionality."""
+    
+    def test_parse_cookie_string(self):
+        """Test parsing cookie strings."""
+        # Test simple cookie string
+        cookies = parse_cookie_string("session=abc123; user=john")
+        self.assertEqual(cookies["session"], "abc123")
+        self.assertEqual(cookies["user"], "john")
+        
+        # Test with spaces and semicolons
+        cookies = parse_cookie_string("session=abc123;user=john;token=xyz789")
+        self.assertEqual(len(cookies), 3)
+        self.assertEqual(cookies["token"], "xyz789")
+        
+        # Test empty string
+        cookies = parse_cookie_string("")
+        self.assertEqual(len(cookies), 0)
+        
+        # Test with equals in value
+        cookies = parse_cookie_string("data=key=value; session=123")
+        self.assertEqual(cookies["data"], "key=value")
+        self.assertEqual(cookies["session"], "123")
+    
+    def test_load_cookies_from_file(self):
+        """Test loading cookies from a file."""
+        # Create a temporary cookie file
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt') as f:
+            f.write("# Netscape HTTP Cookie File\n")
+            f.write("# This is a comment\n")
+            f.write(".example.com\tTRUE\t/\tFALSE\t0\tsession\tabc123\n")
+            f.write(".example.com\tTRUE\t/\tFALSE\t0\tuser\tjohn\n")
+            f.write("# Another comment\n")
+            f.write(".test.com\tTRUE\t/\tTRUE\t1234567890\ttoken\txyz789\n")
+            temp_file = f.name
+        
+        try:
+            # Load cookies from file
+            cookies = load_cookies_from_file(temp_file)
+            self.assertIsNotNone(cookies)
+            self.assertEqual(cookies["session"], "abc123")
+            self.assertEqual(cookies["user"], "john")
+            self.assertEqual(cookies["token"], "xyz789")
+            
+            # Test with simple format
+            with open(temp_file, 'w') as f:
+                f.write("session=def456\n")
+                f.write("user=jane\n")
+                f.write("# Comment line\n")
+                f.write("token=uvw321\n")
+            
+            cookies = load_cookies_from_file(temp_file)
+            self.assertEqual(cookies["session"], "def456")
+            self.assertEqual(cookies["user"], "jane")
+            self.assertEqual(cookies["token"], "uvw321")
+            
+        finally:
+            # Clean up
+            os.unlink(temp_file)
+    
+    def test_cookie_auth_in_client(self):
+        """Test that ODataClient accepts cookie authentication."""
+        # Create minimal metadata
+        entity_type = EntityType(
+            name="TestEntity",
+            properties=[
+                EntityProperty(name="ID", type="Edm.String", nullable=False, is_key=True)
+            ],
+            key_properties=["ID"]
+        )
+        
+        metadata = ODataMetadata(
+            entity_types={"TestEntity": entity_type},
+            entity_sets={"TestSet": EntitySet(name="TestSet", entity_type="TestEntity")},
+            service_url="https://example.com/odata/"
+        )
+        
+        # Test with cookie dict
+        cookies = {"session": "abc123", "user": "john"}
+        client = ODataClient(metadata, auth=cookies)
+        self.assertEqual(client.auth_type, "cookie")
+        self.assertFalse(client.session.verify)  # SSL verification should be disabled
+        
+        # Test with basic auth tuple
+        client = ODataClient(metadata, auth=("user", "pass"))
+        self.assertEqual(client.auth_type, "basic")
+        
+        # Test with no auth
+        client = ODataClient(metadata, auth=None)
+        self.assertEqual(client.auth_type, "none")
+    
+    def test_cookie_auth_in_metadata_parser(self):
+        """Test that MetadataParser accepts cookie authentication."""
+        # Test with cookie dict
+        cookies = {"session": "abc123", "user": "john"}
+        parser = MetadataParser("https://example.com/odata/", auth=cookies)
+        self.assertEqual(parser.auth_type, "cookie")
+        self.assertFalse(parser.session.verify)  # SSL verification should be disabled
+        
+        # Test with basic auth tuple
+        parser = MetadataParser("https://example.com/odata/", auth=("user", "pass"))
+        self.assertEqual(parser.auth_type, "basic")
+        
+        # Test with no auth
+        parser = MetadataParser("https://example.com/odata/", auth=None)
+        self.assertEqual(parser.auth_type, "none")
 
 
 class TestODataClient(unittest.TestCase):
@@ -220,8 +330,8 @@ class TestODataClient(unittest.TestCase):
 class TestODataMCPBridge(unittest.TestCase):
     """Tests for the ODataMCPBridge class."""
     
-    @patch('odata_mcp.MetadataParser.parse')
-    @patch('odata_mcp.FastMCP.add_tool')
+    @patch('odata_mcp_lib.metadata_parser.MetadataParser.parse')
+    @patch('fastmcp.FastMCP.add_tool')
     def test_tool_registration(self, mock_add_tool, mock_parse):
         """Test that MCP tools are registered correctly."""
         # Create minimal metadata

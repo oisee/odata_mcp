@@ -9,7 +9,7 @@ import sys
 import signal
 import traceback
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 
 try:
@@ -28,7 +28,7 @@ from .client import ODataClient
 class ODataMCPBridge:
     """Bridge between OData and MCP, creating tools from OData metadata."""
 
-    def __init__(self, service_url: str, auth: Optional[Tuple[str, str]] = None, mcp_name: str = "odata-mcp", verbose: bool = False, 
+    def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, mcp_name: str = "odata-mcp", verbose: bool = False, 
                  tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True):
         self.service_url = service_url
         self.auth = auth

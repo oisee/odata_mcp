@@ -4,7 +4,7 @@ OData metadata parser for extracting entity types, sets, and function imports.
 
 import sys
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 import requests
 from lxml import etree
 
@@ -15,14 +15,29 @@ from .models import EntityProperty, EntityType, EntitySet, FunctionImport, OData
 class MetadataParser:
     """Parses OData v2 metadata from an OData service."""
 
-    def __init__(self, service_url: str, auth: Optional[Tuple[str, str]] = None, verbose: bool = False):
+    def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, verbose: bool = False):
         self.service_url = service_url.rstrip('/')
         self.metadata_url = f"{self.service_url}/$metadata"
         self.auth = auth
         self.verbose = verbose
         self.session = requests.Session()
+        
+        # Handle different auth types
         if auth:
-            self.session.auth = auth
+            if isinstance(auth, tuple) and len(auth) == 2:
+                # Basic auth
+                self.session.auth = auth
+                self.auth_type = "basic"
+            elif isinstance(auth, dict):
+                # Cookie auth
+                self.session.cookies.update(auth)
+                self.auth_type = "cookie"
+                # Disable SSL verification for internal servers when using cookies
+                self.session.verify = False
+            else:
+                raise ValueError("Auth must be either (username, password) tuple or cookies dict")
+        else:
+            self.auth_type = "none"
         # Standard headers
         self.session.headers.update({
             'Accept': 'application/xml, application/atom+xml, application/json',

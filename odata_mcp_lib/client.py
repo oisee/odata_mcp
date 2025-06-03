@@ -6,7 +6,7 @@ import asyncio
 import json
 import sys
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 import requests
 
@@ -18,7 +18,7 @@ from .guid_handler import ODataGUIDHandler
 class ODataClient:
     """Client for interacting with an OData v2 service."""
 
-    def __init__(self, metadata: ODataMetadata, auth: Optional[Tuple[str, str]] = None, 
+    def __init__(self, metadata: ODataMetadata, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, 
                  verbose: bool = False, optimize_guids: bool = True,
                  max_response_items: int = 1000):
         self.metadata = metadata
@@ -29,8 +29,23 @@ class ODataClient:
         self.guid_handler = ODataGUIDHandler()
         self.base_url = metadata.service_url
         self.session = requests.Session()
+        
+        # Handle different auth types
         if auth:
-            self.session.auth = auth
+            if isinstance(auth, tuple) and len(auth) == 2:
+                # Basic auth
+                self.session.auth = auth
+                self.auth_type = "basic"
+            elif isinstance(auth, dict):
+                # Cookie auth
+                self.session.cookies.update(auth)
+                self.auth_type = "cookie"
+                # Disable SSL verification for internal servers when using cookies
+                self.session.verify = False
+            else:
+                raise ValueError("Auth must be either (username, password) tuple or cookies dict")
+        else:
+            self.auth_type = "none"
         # Standard headers, always prefer JSON
         self.session.headers.update({
             'Accept': 'application/json',

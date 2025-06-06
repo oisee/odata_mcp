@@ -87,6 +87,7 @@ def main():
     parser.add_argument("--tool-postfix", help="Custom postfix for tool names (default: _for_<service_id>)")
     parser.add_argument("--no-postfix", action="store_true", help="Use prefix instead of postfix for tool naming")
     parser.add_argument("--tool-shrink", action="store_true", help="Use shortened tool names (crt_, get_, upd_, del_, srch_, fltr_)")
+    parser.add_argument("--entities", help="Comma-separated list of entities to generate tools for (e.g., 'Products,Categories,Orders')")
 
     args = parser.parse_args()
 
@@ -187,6 +188,13 @@ def main():
     # Create and run the bridge
     try:
         # Pass verbose flag and tool naming options to the bridge
+        # Parse entities allowlist if provided
+        allowed_entities = None
+        if args.entities:
+            allowed_entities = [e.strip() for e in args.entities.split(',') if e.strip()]
+            if args.verbose:
+                print(f"[VERBOSE] Filtering tools to only these entities: {allowed_entities}", file=sys.stderr)
+        
         bridge = ODataMCPBridge(
             service_url, 
             auth, 
@@ -194,7 +202,8 @@ def main():
             tool_prefix=args.tool_prefix,
             tool_postfix=args.tool_postfix,
             use_postfix=not args.no_postfix,
-            tool_shrink=args.tool_shrink
+            tool_shrink=args.tool_shrink,
+            allowed_entities=allowed_entities
         )
         bridge.run()
     except Exception as e:

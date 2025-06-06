@@ -296,6 +296,19 @@ func (b *Bridge) generateToolsForEntity(entitySet *EntitySet) {
         b.mcp.RegisterTool(tool)
     }
 }
+
+// Entity filtering for selective tool generation
+func (b *Bridge) registerEntityTools() {
+    for entityName, entitySet := range b.metadata.EntitySets {
+        // Check allowed entities filter
+        if b.allowedEntities != nil && !contains(b.allowedEntities, entityName) {
+            b.logVerbose(fmt.Sprintf("Skipping EntitySet '%s' - not in allowed entities list", entityName))
+            continue
+        }
+        
+        b.generateToolsForEntity(entitySet)
+    }
+}
 ```
 
 ## Key Algorithms

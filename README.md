@@ -84,11 +84,16 @@ python odata_mcp.py --service https://your-service.com/odata/ \
 python odata_mcp.py --tool-prefix myprefix \
                     --tool-postfix myservice \
                     --no-postfix
+
+# Generate tools only for specific entities
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --entities "Products,Categories,Orders" \
+                    --verbose
 ```
 
 ### Generated Tools
 
-The wrapper dynamically generates MCP tools for each entity set:
+The wrapper dynamically generates MCP tools for each entity set. Use `--entities` to limit tool generation to specific entities only (useful for large services):
 
 1. **List/Filter**: `filter_EntitySetName` - Query entities with filtering, sorting, pagination
 2. **Count**: `count_EntitySetName` - Get entity count with optional filtering  

@@ -30,11 +30,13 @@ class ODataMCPBridge:
     """Bridge between OData and MCP, creating tools from OData metadata."""
 
     def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, mcp_name: str = "odata-mcp", verbose: bool = False, 
-                 tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True, tool_shrink: bool = False):
+                 tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True, tool_shrink: bool = False,
+                 allowed_entities: Optional[List[str]] = None):
         self.service_url = service_url
         self.auth = auth
         self.verbose = verbose
         self.tool_shrink = tool_shrink
+        self.allowed_entities = allowed_entities
         self.mcp = FastMCP(name=mcp_name, timeout=120)  # Increased timeout
         self.registered_entity_tools = {}
         self.registered_function_tools = []
@@ -78,6 +80,8 @@ class ODataMCPBridge:
             self._log_verbose("OData Client Initialized.")
 
             self._log_verbose("Registering MCP Tools...")
+            if self.allowed_entities:
+                self._log_verbose(f"Entity filter active - only generating tools for: {', '.join(self.allowed_entities)}")
             self._register_tools()
             self._log_verbose("MCP Tools Registered.")
 
@@ -486,6 +490,11 @@ class ODataMCPBridge:
 
         # --- Entity Set Tools ---
         for es_name, entity_set in self.metadata.entity_sets.items():
+            # Check if this entity is in the allowed list (if specified)
+            if self.allowed_entities and es_name not in self.allowed_entities:
+                self._log_verbose(f"Skipping EntitySet '{es_name}' - not in allowed entities list")
+                continue
+                
             entity_type = self.metadata.entity_types.get(entity_set.entity_type)
             if not entity_type:
                 self._log_verbose(f"Warning: Skipping tools for EntitySet '{es_name}' because EntityType '{entity_set.entity_type}' was not found or defined.")

@@ -15,7 +15,7 @@ The OData MCP Wrapper enables seamless integration between OData v2 services and
 - **Full CRUD Support**: Create, Read, Update, Delete operations for entity sets
 - **Query Capabilities**: Standard OData query parameters (filter, select, expand, orderby, etc.)
 - **Function Import Support**: Handles OData function imports
-- **Authentication**: Basic auth with CSRF token management
+- **Authentication**: Basic auth and cookie-based auth with CSRF token management
 - **GUID Optimization**: Automatic base64 ↔ standard GUID conversion
 - **Response Optimization**: Size limiting and selective field retrieval
 
@@ -50,11 +50,15 @@ Create a `.env` file in the project directory:
 ODATA_SERVICE_URL=https://your-odata-service.com/odata/
 ODATA_URL=https://your-odata-service.com/odata/  # Alternative
 
-# Authentication (if required)
+# Basic Authentication (if required)
 ODATA_USERNAME=your_username
 ODATA_USER=your_username  # Alternative
 ODATA_PASSWORD=your_password
 ODATA_PASS=your_password  # Alternative
+
+# Cookie Authentication (alternative to basic auth)
+ODATA_COOKIE_FILE=/path/to/cookie.txt
+ODATA_COOKIE_STRING="session=abc123; token=xyz789"
 ```
 
 ## Usage
@@ -65,10 +69,15 @@ ODATA_PASS=your_password  # Alternative
 # Using environment variables
 python odata_mcp.py
 
-# Using command line arguments
+# Using command line arguments (basic auth)
 python odata_mcp.py --service https://your-service.com/odata/ \
                     --user USERNAME \
                     --password PASSWORD \
+                    --verbose
+
+# Using cookie authentication
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --cookie-file cookie.txt \
                     --verbose
 
 # Additional options
@@ -178,6 +187,7 @@ from odata_mcp_compat import MetadataParser, ODataClient, ODataMCPBridge
 ### Short-term Goals (3-6 months)
 - [ ] OData v4 support
 - [ ] Enhanced batch operations
+- [x] Cookie-based authentication (completed)
 - [ ] OAuth 2.0 authentication
 - [ ] Response caching for performance
 - [ ] Input validation improvements
@@ -203,6 +213,7 @@ from odata_mcp_compat import MetadataParser, ODataClient, ODataMCPBridge
 - [x] **Code Cleanup**: Removed redundant files and improved organization
 - [x] **GUID Optimization**: Automatic base64 ↔ standard format conversion
 - [x] **Response Optimization**: Size limiting and field selection
+- [x] **Cookie Authentication**: Support for SSO/MYSAPSSO2 tokens (see [COOKIE_AUTH.md](COOKIE_AUTH.md))
 
 ## Troubleshooting
 

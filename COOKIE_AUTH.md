@@ -2,6 +2,14 @@
 
 This document describes the cookie authentication support added to the OData MCP wrapper.
 
+## Summary
+
+Cookie authentication was implemented to support:
+- Multiple input methods: `--cookie-file`, `--cookie-string`, and environment variables
+- Both Netscape format and simple key=value format cookie files
+- Automatic SSL verification disable for internal/corporate servers
+- Complete backward compatibility with existing basic authentication
+
 ## Overview
 
 The OData MCP wrapper now supports cookie-based authentication in addition to basic authentication. This is particularly useful for:
@@ -68,11 +76,13 @@ MYSAPSSO2=base64encodedtoken
 
 1. **odata_mcp.py**
    - Added `--cookie-file` and `--cookie-string` CLI arguments
-   - Added cookie parsing functions
-   - Added environment variable support for cookies
+   - Added `load_cookies_from_file()` and `parse_cookie_string()` functions
+   - Added environment variable support for cookies (ODATA_COOKIE_FILE, ODATA_COOKIE_STRING)
+   - Updated authentication handling logic to support cookies
 
 2. **odata_mcp_lib/client.py**
    - Modified `__init__` to accept Union[Tuple[str, str], Dict[str, str]] for auth
+   - Added auth_type tracking ("basic", "cookie", or "none")
    - Added cookie authentication handling
    - Automatically disables SSL verification for cookie auth
 
@@ -128,3 +138,11 @@ python odata_mcp.py \
 2. **401 Unauthorized**: Cookies may have expired, re-export from browser
 3. **Cookie Format Issues**: Ensure proper Netscape format or use simple key=value format
 4. **Missing Cookies**: Check that required cookies (e.g., MYSAPSSO2, SAP_SESSIONID) are present
+
+## Test Scripts Created
+
+- **test_cookie_auth.py**: Tests cookie authentication with real services
+- **test_cookie_integration.py**: Demonstrates extending the existing classes
+- **example_cookie_usage.py**: Usage examples for cookie authentication
+
+All tests have been implemented and pass successfully. The implementation maintains complete backward compatibility - existing basic authentication continues to work as before.

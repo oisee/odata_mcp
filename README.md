@@ -63,7 +63,24 @@ ODATA_COOKIE_STRING="session=abc123; token=xyz789"
 
 ## Usage
 
-### Command Line
+### Command Line Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--service` | OData service URL (overrides positional arg and env var) | - |
+| `-u, --user` | Username for basic authentication | - |
+| `-p, --password` | Password for basic authentication | - |
+| `--cookie-file` | Path to cookie file (Netscape format) | - |
+| `--cookie-string` | Cookie string (key1=val1; key2=val2) | - |
+| `-v, --verbose, --debug` | Enable verbose output to stderr | False |
+| `--tool-prefix` | Custom prefix for tool names | - |
+| `--tool-postfix` | Custom postfix for tool names | `_for_<service_id>` |
+| `--no-postfix` | Use prefix instead of postfix | False |
+| `--tool-shrink` | Use shortened tool names | False |
+| `--entities` | Comma-separated entities (supports wildcards with *) | All entities |
+| `--sort-tools` | Sort tools alphabetically | True |
+
+### Command Line Examples
 
 ```bash
 # Using environment variables
@@ -88,6 +105,16 @@ python odata_mcp.py --tool-prefix myprefix \
 # Generate tools only for specific entities
 python odata_mcp.py --service https://your-service.com/odata/ \
                     --entities "Products,Categories,Orders" \
+                    --verbose
+
+# Use wildcards in entity filtering
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --entities "Product*,Order*,Customer" \
+                    --verbose
+
+# Control tool sorting (default is alphabetical)
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --sort-tools \
                     --verbose
 ```
 

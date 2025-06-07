@@ -297,17 +297,35 @@ func (b *Bridge) generateToolsForEntity(entitySet *EntitySet) {
     }
 }
 
-// Entity filtering for selective tool generation
+// Entity filtering for selective tool generation with wildcard support
 func (b *Bridge) registerEntityTools() {
     for entityName, entitySet := range b.metadata.EntitySets {
-        // Check allowed entities filter
-        if b.allowedEntities != nil && !contains(b.allowedEntities, entityName) {
-            b.logVerbose(fmt.Sprintf("Skipping EntitySet '%s' - not in allowed entities list", entityName))
+        // Check allowed entities filter with wildcard support
+        if b.allowedEntities != nil && !b.matchesEntityFilter(entityName, b.allowedEntities) {
+            b.logVerbose(fmt.Sprintf("Skipping EntitySet '%s' - doesn't match any entity filter pattern", entityName))
             continue
         }
         
         b.generateToolsForEntity(entitySet)
     }
+}
+
+// Wildcard entity matching implementation
+func (b *Bridge) matchesEntityFilter(entityName string, patterns []string) bool {
+    for _, pattern := range patterns {
+        if strings.Contains(pattern, "*") {
+            // Use filepath.Match for wildcard matching (or equivalent)
+            if matched, _ := filepath.Match(pattern, entityName); matched {
+                return true
+            }
+        } else {
+            // Exact match
+            if entityName == pattern {
+                return true
+            }
+        }
+    }
+    return false
 }
 ```
 
@@ -474,6 +492,82 @@ type ErrorResponse struct {
         Message string `json:"message"` // Human-readable message
         Details interface{} `json:"details,omitempty"` // Additional context
     } `json:"error"`
+}
+```
+
+## CLI Features and Configuration
+
+### Command-Line Options
+
+The implementation should support the following CLI options:
+
+1. **Service Configuration**:
+   - `--service`: OData service URL (priority: CLI > env var)
+   - Positional argument as alternative
+
+2. **Authentication**:
+   - `-u, --user` / `-p, --password`: Basic auth
+   - `--cookie-file`: Netscape format cookie file
+   - `--cookie-string`: Direct cookie string
+
+3. **Tool Generation**:
+   - `--entities`: Entity filter with wildcard support
+   - `--tool-prefix` / `--tool-postfix`: Custom naming
+   - `--no-postfix`: Use prefix instead of postfix
+   - `--tool-shrink`: Aggressive name shortening
+   - `--sort-tools`: Alphabetical tool sorting (default: true)
+
+4. **Output**:
+   - `-v, --verbose, --debug`: Verbose stderr output
+
+### Entity Filtering with Wildcards
+
+```go
+// Support patterns like "Product*", "*Service", "User*Data"
+type EntityFilter struct {
+    patterns []string
+    sortTools bool
+}
+
+func (f *EntityFilter) Matches(entityName string) bool {
+    for _, pattern := range f.patterns {
+        if strings.Contains(pattern, "*") {
+            if matched, _ := filepath.Match(pattern, entityName); matched {
+                return true
+            }
+        } else if entityName == pattern {
+            return true
+        }
+    }
+    return false
+}
+```
+
+### Tool Sorting Implementation
+
+```go
+func (b *Bridge) getRegisteredTools() []ToolInfo {
+    tools := []ToolInfo{}
+    
+    // Collect all tools
+    for entity, entityTools := range b.registeredEntityTools {
+        for _, tool := range entityTools {
+            tools = append(tools, ToolInfo{Entity: entity, Name: tool})
+        }
+    }
+    
+    // Sort if enabled
+    if b.config.SortTools {
+        sort.Slice(tools, func(i, j int) bool {
+            // First by entity name, then by tool name
+            if tools[i].Entity != tools[j].Entity {
+                return tools[i].Entity < tools[j].Entity
+            }
+            return tools[i].Name < tools[j].Name
+        })
+    }
+    
+    return tools
 }
 ```
 

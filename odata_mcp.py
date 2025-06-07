@@ -87,7 +87,8 @@ def main():
     parser.add_argument("--tool-postfix", help="Custom postfix for tool names (default: _for_<service_id>)")
     parser.add_argument("--no-postfix", action="store_true", help="Use prefix instead of postfix for tool naming")
     parser.add_argument("--tool-shrink", action="store_true", help="Use shortened tool names (crt_, get_, upd_, del_, srch_, fltr_)")
-    parser.add_argument("--entities", help="Comma-separated list of entities to generate tools for (e.g., 'Products,Categories,Orders')")
+    parser.add_argument("--entities", help="Comma-separated list of entities to generate tools for (e.g., 'Products,Categories,Orders'). Supports wildcards: 'Product*,Order*')")
+    parser.add_argument("--sort-tools", action="store_true", default=True, help="Sort tools alphabetically in the output (default: True)")
 
     args = parser.parse_args()
 
@@ -203,7 +204,8 @@ def main():
             tool_postfix=args.tool_postfix,
             use_postfix=not args.no_postfix,
             tool_shrink=args.tool_shrink,
-            allowed_entities=allowed_entities
+            allowed_entities=allowed_entities,
+            sort_tools=args.sort_tools
         )
         bridge.run()
     except Exception as e:

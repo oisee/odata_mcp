@@ -8,6 +8,7 @@ import re
 import sys
 import signal
 import traceback
+import fnmatch
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
@@ -31,12 +32,13 @@ class ODataMCPBridge:
 
     def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, mcp_name: str = "odata-mcp", verbose: bool = False, 
                  tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True, tool_shrink: bool = False,
-                 allowed_entities: Optional[List[str]] = None):
+                 allowed_entities: Optional[List[str]] = None, sort_tools: bool = True):
         self.service_url = service_url
         self.auth = auth
         self.verbose = verbose
         self.tool_shrink = tool_shrink
         self.allowed_entities = allowed_entities
+        self.sort_tools = sort_tools
         self.mcp = FastMCP(name=mcp_name, timeout=120)  # Increased timeout
         self.registered_entity_tools = {}
         self.registered_function_tools = []
@@ -98,6 +100,19 @@ class ODataMCPBridge:
         if self.verbose:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
             print(f"[{timestamp} Bridge VERBOSE] {message}", file=sys.stderr)
+    
+    def _matches_entity_filter(self, entity_name: str, patterns: List[str]) -> bool:
+        """Check if an entity name matches any of the provided patterns (supports wildcards)."""
+        for pattern in patterns:
+            if '*' in pattern:
+                # Use fnmatch for wildcard matching
+                if fnmatch.fnmatch(entity_name, pattern):
+                    return True
+            else:
+                # Exact match
+                if entity_name == pattern:
+                    return True
+        return False
     
     def _generate_service_identifier(self, service_url: str) -> str:
         """Generate a compact service identifier from the service URL."""
@@ -490,9 +505,9 @@ class ODataMCPBridge:
 
         # --- Entity Set Tools ---
         for es_name, entity_set in self.metadata.entity_sets.items():
-            # Check if this entity is in the allowed list (if specified)
-            if self.allowed_entities and es_name not in self.allowed_entities:
-                self._log_verbose(f"Skipping EntitySet '{es_name}' - not in allowed entities list")
+            # Check if this entity matches any filter pattern (if specified)
+            if self.allowed_entities and not self._matches_entity_filter(es_name, self.allowed_entities):
+                self._log_verbose(f"Skipping EntitySet '{es_name}' - doesn't match any entity filter pattern")
                 continue
                 
             entity_type = self.metadata.entity_types.get(entity_set.entity_type)
@@ -669,11 +684,22 @@ class ODataMCPBridge:
         if self.verbose:
             print("\n--- Registered Tools Summary ---", file=sys.stderr)
             print(f"- Service Info: {self._make_tool_name('odata_service_info')}", file=sys.stderr)
-            for es_name, tools in self.registered_entity_tools.items():
+            
+            # Sort entity sets if sort_tools is enabled
+            entity_items = list(self.registered_entity_tools.items())
+            if self.sort_tools:
+                entity_items.sort(key=lambda x: x[0])
+                
+            for es_name, tools in entity_items:
                 if tools:
-                    print(f"- Entity Set '{es_name}': {', '.join(sorted(tools))}", file=sys.stderr)
+                    # Sort individual tools within each entity set if sort_tools is enabled
+                    tool_list = sorted(tools) if self.sort_tools else tools
+                    print(f"- Entity Set '{es_name}': {', '.join(tool_list)}", file=sys.stderr)
+            
             if self.registered_function_tools:
-                print(f"- Function Imports: {', '.join(sorted(self.registered_function_tools))}", file=sys.stderr)
+                # Sort function tools if sort_tools is enabled
+                func_tools = sorted(self.registered_function_tools) if self.sort_tools else self.registered_function_tools
+                print(f"- Function Imports: {', '.join(func_tools)}", file=sys.stderr)
             print("-------------------------------\n", file=sys.stderr)
 
     def add_service_info_tool(self):
@@ -681,12 +707,23 @@ class ODataMCPBridge:
         async def odata_service_info() -> str:
             """Provides metadata about the configured OData service, including available entity sets, entity types, function imports, and registered tools."""
             # Use previously stored registration info for tools
-            registered_entity_tools_summary = {
-                name: tools for name, tools in self.registered_entity_tools.items() if tools
-            }
+            registered_entity_tools_summary = {}
+            entity_items = list(self.registered_entity_tools.items())
+            if self.sort_tools:
+                entity_items.sort(key=lambda x: x[0])
+            
+            for name, tools in entity_items:
+                if tools:
+                    # Sort tools within each entity if sort_tools is enabled
+                    registered_entity_tools_summary[name] = sorted(tools) if self.sort_tools else tools
 
             entity_set_details = {}
-            for name, es in self.metadata.entity_sets.items():
+            # Sort entity sets if sort_tools is enabled
+            entity_set_items = list(self.metadata.entity_sets.items())
+            if self.sort_tools:
+                entity_set_items.sort(key=lambda x: x[0])
+                
+            for name, es in entity_set_items:
                 # Attempt to get the related entity type description
                 et = self.metadata.entity_types.get(es.entity_type)
                 et_desc = et.description if et else None
@@ -701,7 +738,12 @@ class ODataMCPBridge:
                 }
 
             entity_type_details = {}
-            for name, et in self.metadata.entity_types.items():
+            # Sort entity types if sort_tools is enabled
+            entity_type_items = list(self.metadata.entity_types.items())
+            if self.sort_tools:
+                entity_type_items.sort(key=lambda x: x[0])
+                
+            for name, et in entity_type_items:
                 entity_type_details[name] = {
                     "description": et.description or "No description",
                     "key_properties": et.key_properties,
@@ -717,7 +759,12 @@ class ODataMCPBridge:
                 }
 
             function_import_details = {}
-            for name, fi in self.metadata.function_imports.items():
+            # Sort function imports if sort_tools is enabled
+            function_import_items = list(self.metadata.function_imports.items())
+            if self.sort_tools:
+                function_import_items.sort(key=lambda x: x[0])
+                
+            for name, fi in function_import_items:
                 function_import_details[name] = {
                     "description": fi.description or "No description",
                     "http_method": fi.http_method,
@@ -739,7 +786,7 @@ class ODataMCPBridge:
                 "entity_types": entity_type_details,  # Added entity type details
                 "function_imports": function_import_details,  # Added function details
                 "registered_entity_tools_summary": registered_entity_tools_summary,  # Summary of tools per entity set
-                "registered_function_tools": self.registered_function_tools
+                "registered_function_tools": sorted(self.registered_function_tools) if self.sort_tools else self.registered_function_tools
             }
             try:
                 # Use default=str for complex objects that might not be serializable otherwise

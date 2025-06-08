@@ -20,3 +20,4 @@ cookie*.txt
 cookie.txt
 cookie*
 test_cookie*
+.mcp.json

@@ -7,6 +7,8 @@ Processor (MCP) pattern, dynamically generating MCP tools based on OData metadat
 """
 
 import argparse
+import inspect
+import json
 import os
 import signal
 import sys
@@ -62,6 +64,171 @@ def parse_cookie_string(cookie_string: str) -> Dict[str, str]:
     return cookies
 
 
+def print_trace_info(bridge):
+    """Print comprehensive trace information about the MCP bridge and all its tools."""
+    print("=" * 80)
+    print("🔍 OData MCP Bridge Trace Information")
+    print("=" * 80)
+    
+    # Service Information
+    print(f"\n🌐 Service URL: {bridge.service_url}")
+    print(f"🔧 MCP Name: {bridge.mcp.name}")
+    print(f"🎯 Tool Naming: {'Postfix' if bridge.use_postfix else 'Prefix'}")
+    if bridge.use_postfix:
+        print(f"📝 Tool Postfix: '{bridge.tool_postfix}'")
+    else:
+        print(f"📝 Tool Prefix: '{bridge.tool_prefix}'")
+    print(f"📏 Tool Shrink: {bridge.tool_shrink}")
+    print(f"🔍 Sort Tools: {bridge.sort_tools}")
+    
+    # Entity/Function Filters
+    if bridge.allowed_entities:
+        print(f"🎯 Entity Filter: {', '.join(bridge.allowed_entities)}")
+    else:
+        print("🎯 Entity Filter: None (all entities)")
+        
+    if bridge.allowed_functions:
+        print(f"⚙️ Function Filter: {', '.join(bridge.allowed_functions)}")
+    else:
+        print("⚙️ Function Filter: None (all functions)")
+    
+    # Authentication Info
+    if bridge.auth:
+        if isinstance(bridge.auth, tuple):
+            print(f"🔐 Authentication: Basic (user: {bridge.auth[0]})")
+        elif isinstance(bridge.auth, dict):
+            print(f"🔐 Authentication: Cookie ({len(bridge.auth)} cookies)")
+        else:
+            print(f"🔐 Authentication: Custom ({type(bridge.auth).__name__})")
+    else:
+        print("🔐 Authentication: None (anonymous)")
+    
+    # Metadata Summary
+    print(f"\n📊 Metadata Summary:")
+    print(f"   • Entity Types: {len(bridge.metadata.entity_types)}")
+    print(f"   • Entity Sets: {len(bridge.metadata.entity_sets)}")
+    print(f"   • Function Imports: {len(bridge.metadata.function_imports)}")
+    
+    # Get all registered tools from our tracking
+    tools = bridge.all_registered_tools
+    total_tools = len(tools)
+    print(f"\n🛠️ Registered MCP Tools ({total_tools} total):")
+    
+    # Group tools by type
+    service_tools = []
+    entity_tools = {}
+    function_tools = []
+    
+    for tool_name, tool_func in tools.items():
+        if 'service_info' in tool_name:
+            service_tools.append(tool_name)
+        elif any(es_name in tool_name for es_name in bridge.metadata.entity_sets.keys()):
+            # Find which entity set this tool belongs to
+            for es_name in bridge.metadata.entity_sets.keys():
+                if es_name in tool_name:
+                    if es_name not in entity_tools:
+                        entity_tools[es_name] = []
+                    entity_tools[es_name].append(tool_name)
+                    break
+        else:
+            function_tools.append(tool_name)
+    
+    # Print Service Tools
+    if service_tools:
+        print(f"\n   📋 Service Info Tools:")
+        for tool in sorted(service_tools):
+            print(f"      • {tool}")
+    
+    # Print Entity Tools
+    if entity_tools:
+        print(f"\n   📦 Entity Set Tools:")
+        entity_items = sorted(entity_tools.items()) if bridge.sort_tools else entity_tools.items()
+        for es_name, tool_list in entity_items:
+            sorted_tools = sorted(tool_list) if bridge.sort_tools else tool_list
+            print(f"      📁 {es_name}: {len(tool_list)} tools")
+            for tool in sorted_tools:
+                # Determine tool operation from name
+                operation = "❓"
+                if 'filter' in tool: operation = "🔍"
+                elif 'count' in tool: operation = "🔢"
+                elif 'search' in tool: operation = "🔎"
+                elif 'get' in tool: operation = "📖"
+                elif 'create' in tool: operation = "➕"
+                elif 'update' in tool: operation = "✏️"
+                elif 'delete' in tool: operation = "🗑️"
+                print(f"         {operation} {tool}")
+    
+    # Print Function Tools
+    if function_tools:
+        print(f"\n   ⚙️ Function Import Tools:")
+        sorted_functions = sorted(function_tools) if bridge.sort_tools else function_tools
+        for tool in sorted_functions:
+            print(f"      • {tool}")
+    
+    # Detailed Tool Information
+    print(f"\n🔍 Detailed Tool Information:")
+    print("=" * 60)
+    
+    all_tools = sorted(tools.keys()) if bridge.sort_tools else tools.keys()
+    for tool_name in all_tools:
+        tool_func = tools[tool_name]
+        
+        print(f"\n🛠️ Tool: {tool_name}")
+        
+        # Get function signature
+        try:
+            sig = inspect.signature(tool_func)
+            params = []
+            for param_name, param in sig.parameters.items():
+                if param_name == 'self':
+                    continue
+                
+                type_hint = str(param.annotation) if param.annotation != inspect.Parameter.empty else 'Any'
+                has_default = param.default != inspect.Parameter.empty
+                required = not has_default
+                
+                param_info = {
+                    'name': param_name,
+                    'type': type_hint,
+                    'required': required,
+                    'default': str(param.default) if has_default else None
+                }
+                params.append(param_info)
+            
+            # Print parameters
+            if params:
+                print("   📝 Parameters:")
+                for p in params:
+                    req_str = "required" if p['required'] else "optional"
+                    default_str = f" (default: {p['default']})" if p['default'] else ""
+                    print(f"      • {p['name']}: {p['type']} ({req_str}){default_str}")
+            else:
+                print("   📝 Parameters: None")
+            
+            # Get docstring
+            docstring = inspect.getdoc(tool_func)
+            if docstring:
+                # Truncate long docstrings for readability
+                lines = docstring.split('\n')
+                if len(lines) > 5:
+                    truncated_doc = '\n'.join(lines[:5]) + '\n      ... (truncated)'
+                else:
+                    truncated_doc = docstring
+                print(f"   📚 Description:")
+                for line in truncated_doc.split('\n'):
+                    print(f"      {line}")
+            else:
+                print("   📚 Description: No documentation available")
+                
+        except Exception as e:
+            print(f"   ❌ Error inspecting tool: {e}")
+    
+    print("\n" + "=" * 80)
+    print("✅ Trace complete - MCP bridge initialized successfully but not started")
+    print("💡 Use without --trace to start the actual MCP server")
+    print("=" * 80)
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -88,7 +255,9 @@ def main():
     parser.add_argument("--no-postfix", action="store_true", help="Use prefix instead of postfix for tool naming")
     parser.add_argument("--tool-shrink", action="store_true", help="Use shortened tool names (crt_, get_, upd_, del_, srch_, fltr_)")
     parser.add_argument("--entities", help="Comma-separated list of entities to generate tools for (e.g., 'Products,Categories,Orders'). Supports wildcards: 'Product*,Order*')")
+    parser.add_argument("--functions", help="Comma-separated list of function imports to generate tools for (e.g., 'GetProducts,CreateOrder'). Supports wildcards: 'Get*,Create*')")
     parser.add_argument("--sort-tools", action="store_true", default=True, help="Sort tools alphabetically in the output (default: True)")
+    parser.add_argument("--trace", action="store_true", help="Initialize MCP service and print all tools and parameters, then exit (useful for debugging)")
 
     args = parser.parse_args()
 
@@ -196,6 +365,13 @@ def main():
             if args.verbose:
                 print(f"[VERBOSE] Filtering tools to only these entities: {allowed_entities}", file=sys.stderr)
         
+        # Parse functions allowlist if provided
+        allowed_functions = None
+        if args.functions:
+            allowed_functions = [f.strip() for f in args.functions.split(',') if f.strip()]
+            if args.verbose:
+                print(f"[VERBOSE] Filtering tools to only these functions: {allowed_functions}", file=sys.stderr)
+        
         bridge = ODataMCPBridge(
             service_url, 
             auth, 
@@ -205,8 +381,15 @@ def main():
             use_postfix=not args.no_postfix,
             tool_shrink=args.tool_shrink,
             allowed_entities=allowed_entities,
+            allowed_functions=allowed_functions,
             sort_tools=args.sort_tools
         )
+        
+        # Check if trace mode is enabled
+        if args.trace:
+            print_trace_info(bridge)
+            sys.exit(0)
+        
         bridge.run()
     except Exception as e:
         # Fatal error, print regardless of verbosity

@@ -32,16 +32,18 @@ class ODataMCPBridge:
 
     def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, mcp_name: str = "odata-mcp", verbose: bool = False, 
                  tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True, tool_shrink: bool = False,
-                 allowed_entities: Optional[List[str]] = None, sort_tools: bool = True):
+                 allowed_entities: Optional[List[str]] = None, allowed_functions: Optional[List[str]] = None, sort_tools: bool = True):
         self.service_url = service_url
         self.auth = auth
         self.verbose = verbose
         self.tool_shrink = tool_shrink
         self.allowed_entities = allowed_entities
+        self.allowed_functions = allowed_functions
         self.sort_tools = sort_tools
         self.mcp = FastMCP(name=mcp_name, timeout=120)  # Increased timeout
         self.registered_entity_tools = {}
         self.registered_function_tools = []
+        self.all_registered_tools = {}  # Track all tools for trace functionality
         self.use_postfix = use_postfix
         
         # Initialize name shortener
@@ -103,16 +105,56 @@ class ODataMCPBridge:
     
     def _matches_entity_filter(self, entity_name: str, patterns: List[str]) -> bool:
         """Check if an entity name matches any of the provided patterns (supports wildcards)."""
+        return self._matches_filter_patterns(entity_name, patterns)
+    
+    def _matches_function_filter(self, function_name: str, patterns: List[str]) -> bool:
+        """Check if a function name matches any of the provided patterns (supports wildcards)."""
+        return self._matches_filter_patterns(function_name, patterns)
+    
+    def _matches_filter_patterns(self, name: str, patterns: List[str]) -> bool:
+        """Generic method to check if a name matches any of the provided patterns (supports wildcards)."""
         for pattern in patterns:
             if '*' in pattern:
                 # Use fnmatch for wildcard matching
-                if fnmatch.fnmatch(entity_name, pattern):
+                if fnmatch.fnmatch(name, pattern):
                     return True
             else:
                 # Exact match
-                if entity_name == pattern:
+                if name == pattern:
                     return True
         return False
+    
+    def _function_relates_to_allowed_entities(self, func_name: str, func_import: 'FunctionImport') -> bool:
+        """Check if a function relates to entities that are in the allowed entities list."""
+        # Extract entity types from function name patterns
+        # This is heuristic-based - we look for common patterns in function names
+        entity_hints = []
+        
+        # Common patterns: ACTIVATE_CLASS, UNIT_TEST_PROGRAM, etc.
+        func_upper = func_name.upper()
+        
+        # Look for entity names in the function name
+        for entity_pattern in self.allowed_entities:
+            entity_base = entity_pattern.rstrip('*').upper()
+            if entity_base in func_upper:
+                entity_hints.append(entity_base)
+        
+        # Also check function parameters for entity-related hints
+        for param in func_import.parameters:
+            param_name = param.get('name', '').upper()
+            # Check if parameter names match allowed entities
+            for entity_pattern in self.allowed_entities:
+                entity_base = entity_pattern.rstrip('*').upper()
+                if entity_base in param_name:
+                    entity_hints.append(entity_base)
+        
+        # If we found any entity hints, the function relates to allowed entities
+        if entity_hints:
+            return True
+        
+        # If no specific entity hints found, allow the function by default
+        # (this avoids being too restrictive for generic functions)
+        return True
     
     def _generate_service_identifier(self, service_url: str) -> str:
         """Generate a compact service identifier from the service URL."""
@@ -325,6 +367,8 @@ class ODataMCPBridge:
 
             # Register the dynamically created function
             self.mcp.add_tool(tool_func, name=tool_name)
+            # Track the tool for trace functionality
+            self.all_registered_tools[tool_name] = tool_func
             self._log_verbose(f"Registered tool: {tool_name}")
             return tool_name
         except Exception as e:
@@ -665,6 +709,16 @@ class ODataMCPBridge:
 
         # --- Function Import Tools ---
         for func_name, func_import in self.metadata.function_imports.items():
+            # Check if this function matches any filter pattern (if specified)
+            if self.allowed_functions and not self._matches_function_filter(func_name, self.allowed_functions):
+                self._log_verbose(f"Skipping Function '{func_name}' - doesn't match any function filter pattern")
+                continue
+            
+            # Check if this function relates to entities that are filtered out
+            if self.allowed_entities and not self._function_relates_to_allowed_entities(func_name, func_import):
+                self._log_verbose(f"Skipping Function '{func_name}' - relates to entities not in allowed list")
+                continue
+                
             try:
                 # Params based on function import definition
                 params = self._get_param_defs(func_import.parameters)  # Required based on nullability
@@ -802,6 +856,8 @@ class ODataMCPBridge:
             # Register tool with appropriate naming
             tool_name = self._make_tool_name("odata_service_info")
             self.mcp.add_tool(odata_service_info, name=tool_name)
+            # Track the tool for trace functionality
+            self.all_registered_tools[tool_name] = odata_service_info
             self._log_verbose(f"Registered tool: {tool_name}")
         except Exception as e:
             # Error, print regardless of verbosity

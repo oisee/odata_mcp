@@ -213,13 +213,13 @@ class ODataMCPBridge:
         
         # Shorten operation prefixes
         operation_map = {
-            'create': 'crt',
+            'create': 'create',
             'get': 'get',
             'update': 'upd',
             'delete': 'del',
-            'search': 'srch',
-            'filter': 'fltr',
-            'count': 'cnt',
+            'search': 'search',
+            'filter': 'filter',
+            'count':  'count',
             'invoke': 'call'
         }
         

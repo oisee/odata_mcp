@@ -7,7 +7,7 @@ import json
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, quote
 import requests
 
 from .constants import ODATA_PRIMITIVE_TYPES
@@ -201,9 +201,9 @@ class ODataClient:
             key_value = key_values[key_prop.name]
             py_type = key_prop.get_python_type()
             if py_type == str:
-                # Basic check for quotes inside string - needs proper escaping in real world
-                key_value_str = str(key_value).replace("'", "''")
-                return f"('{key_value_str}')"
+                # URL encode the string value first to handle special characters like forward slashes
+                encoded_value = quote(str(key_value), safe='')
+                return f"('{encoded_value}')"
             else:  # Assume numeric or boolean which don't need quotes
                 # Format boolean as true/false lowercase
                 if py_type == bool:
@@ -215,8 +215,9 @@ class ODataClient:
                 key_value = key_values[key_prop.name]
                 py_type = key_prop.get_python_type()
                 if py_type == str:
-                    key_value_str = str(key_value).replace("'", "''")
-                    key_parts.append(f"{key_prop.name}='{key_value_str}'")
+                    # URL encode the string value to handle special characters like forward slashes
+                    encoded_value = quote(str(key_value), safe='')
+                    key_parts.append(f"{key_prop.name}='{encoded_value}'")
                 elif py_type == bool:
                     key_parts.append(f"{key_prop.name}={str(key_value).lower()}")
                 else:

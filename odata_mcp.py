@@ -253,7 +253,7 @@ def main():
     parser.add_argument("--tool-prefix", help="Custom prefix for tool names (use with --no-postfix)")
     parser.add_argument("--tool-postfix", help="Custom postfix for tool names (default: _for_<service_id>)")
     parser.add_argument("--no-postfix", action="store_true", help="Use prefix instead of postfix for tool naming")
-    parser.add_argument("--tool-shrink", action="store_true", help="Use shortened tool names (crt_, get_, upd_, del_, srch_, fltr_)")
+    parser.add_argument("--tool-shrink", action="store_true", help="Use shortened tool names (create_, get_, upd_, del_, search_, filter_)")
     parser.add_argument("--entities", help="Comma-separated list of entities to generate tools for (e.g., 'Products,Categories,Orders'). Supports wildcards: 'Product*,Order*')")
     parser.add_argument("--functions", help="Comma-separated list of function imports to generate tools for (e.g., 'GetProducts,CreateOrder'). Supports wildcards: 'Get*,Create*')")
     parser.add_argument("--sort-tools", action="store_true", default=True, help="Sort tools alphabetically in the output (default: True)")

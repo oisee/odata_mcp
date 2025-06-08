@@ -561,27 +561,29 @@ class ODataMCPBridge:
                 if registered_name: self.registered_entity_tools[es_name].append(registered_name)
             except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
 
-            # --- Search Tool ---
-            try:
-                tool_name = self._make_tool_name(f"search_{es_name}")
-                params = [
-                    {'name': 'search_term', 'type_hint': 'str', 'required': True, 'description': "Text term(s) to search for"},
-                    {'name': 'top', 'type_hint': 'Optional[int]', 'required': False, 'description': "Maximum number of entities"},
-                    {'name': 'skip', 'type_hint': 'Optional[int]', 'required': False, 'description': "Number of entities to skip"}
-                ]
-                search_desc = " (Service indicates search IS supported)" if entity_set.searchable else " (Service indicates search may NOT be supported)"
-                base_desc = f"Performs a free-text search within the '{es_name}' set{search_desc}."
-                doc = self._format_docstring(base_desc, params, entity_set.description)
-                # Capture current instance and entity_set_name in closure
-                def make_logic(instance, set_name):
-                    async def logic(**kwargs):
-                        return await instance._impl_search(entity_set_name=set_name, **kwargs)
-                    return logic
-                logic = make_logic(self, es_name)
+            # --- Search Tool (only if searchable) ---
+            if entity_set.searchable:
+                try:
+                    tool_name = self._make_tool_name(f"search_{es_name}")
+                    params = [
+                        {'name': 'search_term', 'type_hint': 'str', 'required': True, 'description': "Text term(s) to search for"},
+                        {'name': 'top', 'type_hint': 'Optional[int]', 'required': False, 'description': "Maximum number of entities"},
+                        {'name': 'skip', 'type_hint': 'Optional[int]', 'required': False, 'description': "Number of entities to skip"}
+                    ]
+                    base_desc = f"Performs a free-text search within the '{es_name}' set."
+                    doc = self._format_docstring(base_desc, params, entity_set.description)
+                    # Capture current instance and entity_set_name in closure
+                    def make_logic(instance, set_name):
+                        async def logic(**kwargs):
+                            return await instance._impl_search(entity_set_name=set_name, **kwargs)
+                        return logic
+                    logic = make_logic(self, es_name)
 
-                registered_name = self._create_and_register_tool(tool_name, params, doc, logic)
-                if registered_name: self.registered_entity_tools[es_name].append(registered_name)
-            except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
+                    registered_name = self._create_and_register_tool(tool_name, params, doc, logic)
+                    if registered_name: self.registered_entity_tools[es_name].append(registered_name)
+                except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
+            else:
+                self._log_verbose(f"Skipping search tool for '{es_name}' - entity set is not searchable")
 
             # --- Get Tool ---
             key_props = entity_type.get_key_properties()

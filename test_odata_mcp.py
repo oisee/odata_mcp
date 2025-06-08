@@ -346,7 +346,8 @@ class TestODataMCPBridge(unittest.TestCase):
         
         entity_set = EntitySet(
             name="TestSet",
-            entity_type="TestEntity"
+            entity_type="TestEntity",
+            searchable=True  # Enable search for this test
         )
         
         metadata = ODataMetadata(
@@ -390,6 +391,74 @@ class TestODataMCPBridge(unittest.TestCase):
             # Check if any registered tool contains the expected base name
             found = any(expected_tool in registered_tool for registered_tool in registered_tools)
             self.assertTrue(found, f"No tool found containing '{expected_tool}' in registered tools: {registered_tools}")
+    
+    @patch('odata_mcp_lib.bridge.FastMCP')
+    @patch('odata_mcp_lib.bridge.ODataClient') 
+    @patch.object(MetadataParser, 'parse')
+    def test_searchable_property_respected(self, mock_parse, mock_client_class, mock_mcp_class):
+        """Test that search tools are only registered when searchable=True"""
+        # Create mock instances
+        mock_client = MagicMock()
+        mock_mcp = MagicMock()
+        
+        mock_client_class.return_value = mock_client
+        mock_mcp_class.return_value = mock_mcp
+        
+        # Create test metadata with searchable and non-searchable entities
+        entity_type = EntityType(
+            name="TestEntity",
+            properties=[
+                EntityProperty(name="ID", type="Edm.String", nullable=False, is_key=True),
+                EntityProperty(name="Name", type="Edm.String", nullable=False)
+            ],
+            key_properties=["ID"]
+        )
+        
+        searchable_set = EntitySet(
+            name="SearchableEntity",
+            entity_type="TestEntity",
+            searchable=True
+        )
+        
+        non_searchable_set = EntitySet(
+            name="NonSearchableEntity",
+            entity_type="TestEntity",
+            searchable=False  # Explicitly not searchable
+        )
+        
+        metadata = ODataMetadata(
+            entity_types={"TestEntity": entity_type},
+            entity_sets={
+                "SearchableEntity": searchable_set,
+                "NonSearchableEntity": non_searchable_set
+            },
+            service_url="https://example.com/odata/"
+        )
+        
+        # Set the mock to return our metadata
+        mock_parse.return_value = metadata
+        
+        # Create the bridge
+        bridge = ODataMCPBridge(
+            service_url="https://example.com/odata/",
+            verbose=False
+        )
+        
+        # Get all registered tool names from the 'name' parameter
+        registered_tools = []
+        for call in mock_mcp.add_tool.call_args_list:
+            if 'name' in call[1]:
+                registered_tools.append(call[1]['name'])
+        
+        # Check that search tool exists for searchable entity
+        searchable_search_tools = [t for t in registered_tools if 'search_SearchableEntity' in t]
+        self.assertEqual(len(searchable_search_tools), 1, 
+                        f"Expected 1 search tool for SearchableEntity, found {len(searchable_search_tools)}")
+        
+        # Check that search tool does NOT exist for non-searchable entity
+        non_searchable_search_tools = [t for t in registered_tools if 'search_NonSearchableEntity' in t]
+        self.assertEqual(len(non_searchable_search_tools), 0, 
+                        f"Expected 0 search tools for NonSearchableEntity, found {len(non_searchable_search_tools)}")
 
 
 @unittest.skipIf(not os.getenv("RUN_LIVE_TESTS", "").lower() == "true", 

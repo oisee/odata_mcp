@@ -1,10 +1,10 @@
 # OData MCP Wrapper
 
-A bridge between OData v2 services and the Message Choreography Processor (MCP) pattern, dynamically generating MCP tools based on OData metadata.
+A bridge between OData v2 services and the Model Context Protocol (MCP), dynamically generating MCP tools based on OData metadata.
 
 ## Overview
 
-The OData MCP Wrapper enables seamless integration between OData v2 services and the Message Choreography Processor (MCP) pattern. It automatically analyzes OData service metadata and generates corresponding MCP tools, allowing AI agents to interact with OData services through a standardized interface.
+The OData MCP Wrapper enables seamless integration between OData v2 services and the MCP (MCP). It automatically analyzes OData service metadata and generates corresponding MCP tools, allowing AI agents to interact with OData services through a standardized interface.
 
 ### Key Features
 

@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OData MCP SSE Client</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+            margin-top: 0;
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+        }
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 4px;
+            border-left: 3px solid #007bff;
+            padding-left: 8px;
+        }
+        .log-entry.error {
+            border-left-color: #dc3545;
+            background-color: #f8d7da;
+        }
+        .log-entry.success {
+            border-left-color: #28a745;
+            background-color: #d4edda;
+        }
+        .tools-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .tool-card {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .tool-card:hover {
+            background-color: #e9ecef;
+            border-color: #adb5bd;
+        }
+        .tool-name {
+            font-weight: 600;
+            color: #495057;
+            margin-bottom: 4px;
+        }
+        .tool-desc {
+            font-size: 12px;
+            color: #6c757d;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ced4da;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        textarea {
+            min-height: 100px;
+            font-family: 'Consolas', 'Monaco', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>OData MCP SSE Client</h1>
+        <p>
+            Status: <span id="status" class="status disconnected">Disconnected</span>
+            <span id="clientId" style="margin-left: 20px; color: #6c757d;"></span>
+        </p>
+        
+        <div class="controls">
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+            <button id="initializeBtn" onclick="initialize()" disabled>Initialize</button>
+            <button id="listToolsBtn" onclick="listTools()" disabled>List Tools</button>
+            <button id="clearLogBtn" onclick="clearLog()">Clear Log</button>
+        </div>
+        
+        <div class="container">
+            <h2>Server URL</h2>
+            <input type="text" id="serverUrl" value="http://localhost:8080" placeholder="http://localhost:8080">
+        </div>
+        
+        <div class="container">
+            <h2>Event Log</h2>
+            <div id="log" class="log"></div>
+        </div>
+        
+        <div class="container">
+            <h2>Available Tools</h2>
+            <div id="tools" class="tools-list">
+                <p style="color: #6c757d;">No tools loaded. Connect and initialize first.</p>
+            </div>
+        </div>
+        
+        <div class="container">
+            <h2>Tool Tester</h2>
+            <input type="text" id="toolName" placeholder="Tool name">
+            <textarea id="toolArgs" placeholder='Tool arguments (JSON format, e.g., {"filter": "Price gt 20"})'></textarea>
+            <button onclick="callTool()" id="callToolBtn" disabled>Call Tool</button>
+        </div>
+    </div>
+
+    <script>
+        let eventSource = null;
+        let clientId = null;
+        let requestId = 1;
+        
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            entry.textContent = `[${timestamp}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        function updateStatus(connected) {
+            const status = document.getElementById('status');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const initializeBtn = document.getElementById('initializeBtn');
+            const listToolsBtn = document.getElementById('listToolsBtn');
+            const callToolBtn = document.getElementById('callToolBtn');
+            
+            if (connected) {
+                status.textContent = 'Connected';
+                status.className = 'status connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                initializeBtn.disabled = false;
+                listToolsBtn.disabled = false;
+                callToolBtn.disabled = false;
+            } else {
+                status.textContent = 'Disconnected';
+                status.className = 'status disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                initializeBtn.disabled = true;
+                listToolsBtn.disabled = true;
+                callToolBtn.disabled = true;
+                document.getElementById('clientId').textContent = '';
+            }
+        }
+        
+        function connect() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            log(`Connecting to ${serverUrl}/sse...`);
+            
+            eventSource = new EventSource(`${serverUrl}/sse`);
+            
+            eventSource.addEventListener('connection', (event) => {
+                const data = JSON.parse(event.data);
+                clientId = data.clientId;
+                document.getElementById('clientId').textContent = `Client ID: ${clientId}`;
+                log(`Connected with client ID: ${clientId}`, 'success');
+                updateStatus(true);
+            });
+            
+            eventSource.addEventListener('message', (event) => {
+                const data = JSON.parse(event.data);
+                log(`Received: ${JSON.stringify(data, null, 2)}`);
+                
+                // Handle responses
+                if (data.result && data.id) {
+                    handleResponse(data);
+                }
+            });
+            
+            eventSource.addEventListener('keepalive', (event) => {
+                // Ignore keepalive messages
+            });
+            
+            eventSource.onerror = (error) => {
+                log('Connection error', 'error');
+                updateStatus(false);
+            };
+        }
+        
+        function disconnect() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                log('Disconnected');
+                updateStatus(false);
+            }
+        }
+        
+        async function sendRequest(method, params = {}) {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const id = requestId++;
+            
+            const request = {
+                jsonrpc: '2.0',
+                id: id,
+                method: method,
+                params: params
+            };
+            
+            log(`Sending: ${method}`);
+            
+            try {
+                const response = await fetch(`${serverUrl}/rpc`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(request)
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    log(`Error: ${data.error.message}`, 'error');
+                } else {
+                    handleResponse(data);
+                }
+                
+                return data;
+            } catch (error) {
+                log(`Request failed: ${error.message}`, 'error');
+                return null;
+            }
+        }
+        
+        function handleResponse(data) {
+            if (data.result) {
+                if (data.result.tools) {
+                    displayTools(data.result.tools);
+                } else if (data.result.content) {
+                    log(`Tool result: ${data.result.content[0].text}`, 'success');
+                } else {
+                    log(`Response: ${JSON.stringify(data.result, null, 2)}`, 'success');
+                }
+            }
+        }
+        
+        function displayTools(tools) {
+            const toolsDiv = document.getElementById('tools');
+            toolsDiv.innerHTML = '';
+            
+            tools.forEach(tool => {
+                const card = document.createElement('div');
+                card.className = 'tool-card';
+                card.onclick = () => selectTool(tool.name);
+                
+                const name = document.createElement('div');
+                name.className = 'tool-name';
+                name.textContent = tool.name;
+                
+                const desc = document.createElement('div');
+                desc.className = 'tool-desc';
+                desc.textContent = tool.description || 'No description';
+                
+                card.appendChild(name);
+                card.appendChild(desc);
+                toolsDiv.appendChild(card);
+            });
+            
+            log(`Loaded ${tools.length} tools`, 'success');
+        }
+        
+        function selectTool(toolName) {
+            document.getElementById('toolName').value = toolName;
+            document.getElementById('toolArgs').focus();
+        }
+        
+        async function initialize() {
+            await sendRequest('initialize', {
+                protocolVersion: '0.1.0',
+                capabilities: {},
+                clientInfo: {
+                    name: 'OData MCP SSE Test Client',
+                    version: '1.0.0'
+                }
+            });
+            
+            // Send initialized notification
+            await sendRequest('initialized');
+        }
+        
+        async function listTools() {
+            await sendRequest('tools/list');
+        }
+        
+        async function callTool() {
+            const toolName = document.getElementById('toolName').value;
+            const toolArgsStr = document.getElementById('toolArgs').value;
+            
+            if (!toolName) {
+                log('Please enter a tool name', 'error');
+                return;
+            }
+            
+            let args = {};
+            if (toolArgsStr) {
+                try {
+                    args = JSON.parse(toolArgsStr);
+                } catch (e) {
+                    log('Invalid JSON in tool arguments', 'error');
+                    return;
+                }
+            }
+            
+            await sendRequest('tools/call', {
+                name: toolName,
+                arguments: args
+            });
+        }
+        
+        // Auto-connect on load
+        window.onload = () => {
+            // Don't auto-connect, let user click Connect
+        };
+    </script>
+</body>
+</html>

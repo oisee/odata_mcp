@@ -21,6 +21,8 @@ except ImportError:
     print("You might need to adjust the import statement based on your project structure.", file=sys.stderr)
     sys.exit(1)
 
+from .transport import Transport, TransportMessage
+
 from .models import EntityProperty, EntityType, FunctionImport
 from .metadata_parser import MetadataParser
 from .client import ODataClient
@@ -34,7 +36,8 @@ class ODataMCPBridge:
                  tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True, tool_shrink: bool = False,
                  allowed_entities: Optional[List[str]] = None, allowed_functions: Optional[List[str]] = None, sort_tools: bool = True,
                  pagination_hints: bool = False, legacy_dates: bool = True, verbose_errors: bool = False,
-                 response_metadata: bool = False, max_response_size: int = 5 * 1024 * 1024, max_items: int = 100):
+                 response_metadata: bool = False, max_response_size: int = 5 * 1024 * 1024, max_items: int = 100,
+                 transport: Optional[Transport] = None):
         self.service_url = service_url
         self.auth = auth
         self.verbose = verbose
@@ -48,6 +51,7 @@ class ODataMCPBridge:
         self.response_metadata = response_metadata
         self.max_response_size = max_response_size
         self.max_items = max_items
+        self.transport = transport
         self.mcp = FastMCP(name=mcp_name, timeout=120)  # Increased timeout
         self.registered_entity_tools = {}
         self.registered_function_tools = []
@@ -885,5 +889,89 @@ class ODataMCPBridge:
             # Warning, print only if verbose
             self._log_verbose("Warning: No entity sets were successfully processed. Tools may be limited.")
 
-        # The FastMCP server run method handles the main loop
-        self.mcp.run()
+        # If transport is provided, use it; otherwise use FastMCP's default
+        if self.transport:
+            # Set up message handler
+            self.transport.handler = self._handle_transport_message
+            # Run transport asynchronously
+            asyncio.run(self._run_with_transport())
+        else:
+            # The FastMCP server run method handles the main loop
+            self.mcp.run()
+    
+    async def _run_with_transport(self):
+        """Run the MCP server with custom transport."""
+        try:
+            await self.transport.start()
+            # Keep running until stopped
+            while self.transport.is_running:
+                await asyncio.sleep(1)
+        finally:
+            await self.transport.stop()
+    
+    async def _handle_transport_message(self, message: TransportMessage) -> Optional[TransportMessage]:
+        """Handle incoming transport messages."""
+        # Convert transport message to MCP request/response
+        # This is a simplified handler - in production you'd want full JSON-RPC handling
+        try:
+            if message.method == "initialize":
+                return TransportMessage(
+                    id=message.id,
+                    result={
+                        "protocolVersion": "0.1.0",
+                        "capabilities": {
+                            "tools": {"listChanged": True}
+                        },
+                        "serverInfo": {
+                            "name": self.mcp.name,
+                            "version": "1.0.0"
+                        }
+                    }
+                )
+            elif message.method == "initialized":
+                # No response for notification
+                return None
+            elif message.method == "tools/list":
+                tools = []
+                for tool_name in self.all_registered_tools:
+                    # Get tool info from FastMCP
+                    tools.append({
+                        "name": tool_name,
+                        "description": "OData operation",
+                        "inputSchema": {"type": "object"}
+                    })
+                return TransportMessage(
+                    id=message.id,
+                    result={"tools": tools}
+                )
+            elif message.method == "tools/call":
+                # This would need integration with FastMCP's tool execution
+                tool_name = message.params.get("name")
+                args = message.params.get("arguments", {})
+                # For now, return a placeholder
+                return TransportMessage(
+                    id=message.id,
+                    result={
+                        "content": [{
+                            "type": "text",
+                            "text": f"Tool {tool_name} called with args: {args}"
+                        }]
+                    }
+                )
+            else:
+                return TransportMessage(
+                    id=message.id,
+                    error={
+                        "code": -32601,
+                        "message": "Method not found"
+                    }
+                )
+        except Exception as e:
+            return TransportMessage(
+                id=message.id if message else None,
+                error={
+                    "code": -32603,
+                    "message": "Internal error",
+                    "data": str(e)
+                }
+            )

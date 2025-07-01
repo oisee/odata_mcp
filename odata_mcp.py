@@ -18,6 +18,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from odata_mcp_lib import ODataMCPBridge
+from odata_mcp_lib.transport.stdio import StdioTransport
+from odata_mcp_lib.transport.http_sse import HttpSSETransport
 
 # Load environment variables from .env file
 load_dotenv()
@@ -279,6 +281,10 @@ def main():
     parser.add_argument("--max-response-size", type=int, default=5*1024*1024, help="Maximum response size in bytes (default: 5MB)")
     parser.add_argument("--max-items", type=int, default=100, help="Maximum items in response (default: 100)")
     parser.add_argument("--trace", action="store_true", help="Initialize MCP service and print all tools and parameters, then exit (useful for debugging)")
+    
+    # Transport options
+    parser.add_argument("--transport", choices=["stdio", "http", "sse"], default="stdio", help="Transport type: 'stdio' (default) or 'http' (SSE)")
+    parser.add_argument("--http-addr", default=":8080", help="HTTP server address (used with --transport http)")
 
     args = parser.parse_args()
 
@@ -393,6 +399,30 @@ def main():
             if args.verbose:
                 print(f"[VERBOSE] Filtering tools to only these functions: {allowed_functions}", file=sys.stderr)
         
+        # Set up transport based on flag
+        transport = None
+        if args.transport in ["http", "sse"]:
+            # Parse host and port from http_addr
+            addr_parts = args.http_addr.split(":")
+            if len(addr_parts) == 2 and addr_parts[0]:  # host:port
+                host = addr_parts[0]
+                port = int(addr_parts[1])
+            elif len(addr_parts) == 2:  # :port
+                host = "0.0.0.0"
+                port = int(addr_parts[1])
+            else:  # just port or invalid
+                host = "0.0.0.0"
+                try:
+                    port = int(args.http_addr)
+                except ValueError:
+                    port = 8080
+            
+            if args.verbose:
+                print(f"[VERBOSE] Starting HTTP/SSE transport on {host}:{port}", file=sys.stderr)
+            transport = HttpSSETransport(host=host, port=port)
+        elif args.verbose:
+            print("[VERBOSE] Using stdio transport", file=sys.stderr)
+        
         bridge = ODataMCPBridge(
             service_url, 
             auth, 
@@ -409,7 +439,8 @@ def main():
             verbose_errors=args.verbose_errors,
             response_metadata=args.response_metadata,
             max_response_size=args.max_response_size,
-            max_items=args.max_items
+            max_items=args.max_items,
+            transport=transport
         )
         
         # Check if trace mode is enabled

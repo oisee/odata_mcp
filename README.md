@@ -22,6 +22,7 @@ The OData MCP Wrapper enables seamless integration between OData v2 services and
 - **Decimal Field Handling**: Automatic numeric to string conversion for Edm.Decimal fields
 - **Pagination Hints**: Suggested next call parameters for easy pagination
 - **Flexible Response Control**: Options for metadata inclusion and error verbosity
+- **Multiple Transport Options**: STDIO (default) and HTTP/SSE for web-based clients
 
 ## Installation
 
@@ -93,6 +94,8 @@ ODATA_COOKIE_STRING="session=abc123; token=xyz789"
 | `--max-response-size` | Maximum response size in bytes | 5242880 (5MB) |
 | `--max-items` | Maximum items per response | 100 |
 | `--trace` | Print all tools and exit (debugging) | False |
+| `--transport` | Transport type: 'stdio' or 'http' (SSE) | stdio |
+| `--http-addr` | HTTP server address (with --transport http) | :8080 |
 
 ### Command Line Examples
 
@@ -145,6 +148,16 @@ python odata_mcp.py --service https://sap-service.com/odata/ \
 # Debug mode - show all tools without starting server
 python odata_mcp.py --service https://your-service.com/odata/ \
                     --trace
+
+# Run with HTTP/SSE transport for web clients
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --transport http \
+                    --http-addr :8080
+
+# HTTP transport on specific interface
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --transport http \
+                    --http-addr 127.0.0.1:3000
 ```
 
 ### Generated Tools
@@ -189,6 +202,64 @@ await update_ProductSet(
 await odata_service_info()
 ```
 
+## Transport Options
+
+The OData MCP bridge supports two transport mechanisms:
+
+### 1. STDIO Transport (Default)
+- Standard input/output communication
+- Used by Claude Desktop and other MCP clients
+- No additional configuration required
+
+### 2. HTTP/SSE Transport
+- HTTP server with Server-Sent Events
+- Enables web-based clients to interact with OData services
+- Endpoints:
+  - `GET /health` - Health check
+  - `GET /sse` - Server-Sent Events stream
+  - `POST /rpc` - JSON-RPC endpoint
+
+#### Using HTTP/SSE Transport
+
+```bash
+# Start with default port 8080
+python odata_mcp.py --transport http --service https://your-service.com/odata/
+
+# Use custom port
+python odata_mcp.py --transport http --http-addr :3000 --service https://your-service.com/odata/
+
+# Bind to specific interface
+python odata_mcp.py --transport http --http-addr 192.168.1.100:8080 --service https://your-service.com/odata/
+```
+
+#### Testing HTTP/SSE Transport
+
+1. **Using the provided HTML client:**
+   ```bash
+   # Start the server
+   python odata_mcp.py --transport http --service https://services.odata.org/V2/Northwind/Northwind.svc/
+   
+   # Open examples/sse_client.html in a web browser
+   ```
+
+2. **Using the test script:**
+   ```bash
+   ./test_http_transport.sh
+   ```
+
+3. **Using curl:**
+   ```bash
+   # Test health endpoint
+   curl http://localhost:8080/health
+   
+   # Test RPC endpoint
+   curl -X POST http://localhost:8080/rpc \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+   ```
+
+> ⚠️ **Security Warning**: The HTTP/SSE transport does not include authentication. Only use it in secure, trusted environments or behind a reverse proxy with proper authentication.
+
 ## Architecture
 
 The project uses a modular architecture for maintainability:
@@ -201,11 +272,18 @@ odata_mcp_lib/                    # Core modular library
 ├── guid_handler.py               # GUID conversion utilities
 ├── metadata_parser.py            # OData metadata parsing
 ├── client.py                     # HTTP client with error handling
-└── bridge.py                     # MCP bridge implementation
+├── bridge.py                     # MCP bridge implementation
+├── name_shortener.py             # Tool name shortening logic
+└── transport/                    # Transport implementations
+    ├── __init__.py               # Transport base classes
+    ├── stdio.py                  # STDIO transport
+    └── http_sse.py               # HTTP/SSE transport
 
 odata_mcp.py                      # Main executable
-odata_mcp_compat.py               # Backward compatibility layer
+examples/
+├── sse_client.html               # Web-based SSE client
 test_odata_mcp.py                 # Test suite
+test_http_transport.sh            # HTTP transport test script
 ```
 
 ### Key Components
@@ -280,6 +358,8 @@ from odata_mcp_compat import MetadataParser, ODataClient, ODataMCPBridge
 - [x] **Pagination Hints**: Suggested next call parameters for easy pagination
 - [x] **Enhanced Trace Mode**: Comprehensive debugging output
 - [x] **Feature Parity**: Matched Go implementation features
+- [x] **HTTP/SSE Transport**: Web-based client support via Server-Sent Events
+- [x] **Transport Abstraction**: Clean interface for multiple transport types
 
 ## Troubleshooting
 

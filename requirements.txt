@@ -21,3 +21,8 @@ fastmcp
 
 # Optional: Secure XML parsing (recommended for production)
 # defusedxml
+
+# HTTP/SSE transport dependencies
+aiohttp>=3.8.0
+aiohttp-sse>=2.1.0
+aiohttp-cors>=0.7.0

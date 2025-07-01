@@ -18,6 +18,10 @@ The OData MCP Wrapper enables seamless integration between OData v2 services and
 - **Authentication**: Basic auth and cookie-based auth with CSRF token management
 - **GUID Optimization**: Automatic base64 ↔ standard GUID conversion
 - **Response Optimization**: Size limiting and selective field retrieval
+- **Legacy Date Support**: Automatic conversion between SAP /Date(milliseconds)/ and ISO 8601
+- **Decimal Field Handling**: Automatic numeric to string conversion for Edm.Decimal fields
+- **Pagination Hints**: Suggested next call parameters for easy pagination
+- **Flexible Response Control**: Options for metadata inclusion and error verbosity
 
 ## Installation
 
@@ -78,7 +82,17 @@ ODATA_COOKIE_STRING="session=abc123; token=xyz789"
 | `--no-postfix` | Use prefix instead of postfix | False |
 | `--tool-shrink` | Use shortened tool names | False |
 | `--entities` | Comma-separated entities (supports wildcards with *) | All entities |
+| `--functions` | Comma-separated functions (supports wildcards with *) | All functions |
 | `--sort-tools` | Sort tools alphabetically | True |
+| `--no-sort-tools` | Disable alphabetical sorting of tools | - |
+| `--pagination-hints` | Add suggested_next_call in pagination responses | False |
+| `--legacy-dates` | Convert /Date(ms)/ to/from ISO 8601 | True |
+| `--no-legacy-dates` | Disable legacy date format conversion | - |
+| `--verbose-errors` | Include detailed error messages | False |
+| `--response-metadata` | Include __metadata blocks in responses | False |
+| `--max-response-size` | Maximum response size in bytes | 5242880 (5MB) |
+| `--max-items` | Maximum items per response | 100 |
+| `--trace` | Print all tools and exit (debugging) | False |
 
 ### Command Line Examples
 
@@ -114,8 +128,23 @@ python odata_mcp.py --service https://your-service.com/odata/ \
 
 # Control tool sorting (default is alphabetical)
 python odata_mcp.py --service https://your-service.com/odata/ \
-                    --sort-tools \
+                    --no-sort-tools \
                     --verbose
+
+# Enable pagination hints for easier navigation
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --pagination-hints \
+                    --verbose
+
+# SAP-specific options for legacy systems
+python odata_mcp.py --service https://sap-service.com/odata/ \
+                    --legacy-dates \
+                    --response-metadata \
+                    --verbose-errors
+
+# Debug mode - show all tools without starting server
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --trace
 ```
 
 ### Generated Tools
@@ -246,6 +275,11 @@ from odata_mcp_compat import MetadataParser, ODataClient, ODataMCPBridge
 - [x] **GUID Optimization**: Automatic base64 ↔ standard format conversion
 - [x] **Response Optimization**: Size limiting and field selection
 - [x] **Cookie Authentication**: Support for SSO/MYSAPSSO2 tokens (see [COOKIE_AUTH.md](COOKIE_AUTH.md))
+- [x] **Legacy Date Support**: SAP /Date(milliseconds)/ format conversion
+- [x] **Decimal Field Handling**: Automatic conversion for Edm.Decimal types
+- [x] **Pagination Hints**: Suggested next call parameters for easy pagination
+- [x] **Enhanced Trace Mode**: Comprehensive debugging output
+- [x] **Feature Parity**: Matched Go implementation features
 
 ## Troubleshooting
 

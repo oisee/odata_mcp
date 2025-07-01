@@ -81,6 +81,15 @@ def print_trace_info(bridge):
     print(f"📏 Tool Shrink: {bridge.tool_shrink}")
     print(f"🔍 Sort Tools: {bridge.sort_tools}")
     
+    # Feature Flags
+    print(f"\n⚙️ Feature Configuration:")
+    print(f"   • Pagination Hints: {bridge.pagination_hints}")
+    print(f"   • Legacy Date Format: {bridge.legacy_dates}")
+    print(f"   • Verbose Errors: {bridge.verbose_errors}")
+    print(f"   • Response Metadata: {bridge.response_metadata}")
+    print(f"   • Max Response Size: {bridge.max_response_size:,} bytes")
+    print(f"   • Max Items: {bridge.max_items}")
+    
     # Entity/Function Filters
     if bridge.allowed_entities:
         print(f"🎯 Entity Filter: {', '.join(bridge.allowed_entities)}")
@@ -105,9 +114,11 @@ def print_trace_info(bridge):
     
     # Metadata Summary
     print(f"\n📊 Metadata Summary:")
+    print(f"   • Service Description: {bridge.metadata.service_description or 'Not provided'}")
     print(f"   • Entity Types: {len(bridge.metadata.entity_types)}")
     print(f"   • Entity Sets: {len(bridge.metadata.entity_sets)}")
     print(f"   • Function Imports: {len(bridge.metadata.function_imports)}")
+    print(f"   • OData Version: v2 (Python implementation)")
     
     # Get all registered tools from our tracking
     tools = bridge.all_registered_tools
@@ -191,7 +202,8 @@ def print_trace_info(bridge):
                     'name': param_name,
                     'type': type_hint,
                     'required': required,
-                    'default': str(param.default) if has_default else None
+                    'default': str(param.default) if has_default else None,
+                    'description': None  # Add param description if available
                 }
                 params.append(param_info)
             
@@ -201,7 +213,8 @@ def print_trace_info(bridge):
                 for p in params:
                     req_str = "required" if p['required'] else "optional"
                     default_str = f" (default: {p['default']})" if p['default'] else ""
-                    print(f"      • {p['name']}: {p['type']} ({req_str}){default_str}")
+                    desc_str = f" - {p['description']}" if p.get('description') else ""
+                    print(f"      • {p['name']}: {p['type']} ({req_str}){default_str}{desc_str}")
             else:
                 print("   📝 Parameters: None")
             
@@ -257,6 +270,14 @@ def main():
     parser.add_argument("--entities", help="Comma-separated list of entities to generate tools for (e.g., 'Products,Categories,Orders'). Supports wildcards: 'Product*,Order*')")
     parser.add_argument("--functions", help="Comma-separated list of function imports to generate tools for (e.g., 'GetProducts,CreateOrder'). Supports wildcards: 'Get*,Create*')")
     parser.add_argument("--sort-tools", action="store_true", default=True, help="Sort tools alphabetically in the output (default: True)")
+    parser.add_argument("--no-sort-tools", dest="sort_tools", action="store_false", help="Disable alphabetical sorting of tools")
+    parser.add_argument("--pagination-hints", action="store_true", help="Add pagination hints with suggested_next_call in responses")
+    parser.add_argument("--legacy-dates", action="store_true", default=True, help="Support legacy /Date(milliseconds)/ format (default: True)")
+    parser.add_argument("--no-legacy-dates", dest="legacy_dates", action="store_false", help="Disable legacy date format conversion")
+    parser.add_argument("--verbose-errors", action="store_true", help="Include detailed error messages in responses")
+    parser.add_argument("--response-metadata", action="store_true", help="Include __metadata blocks in responses")
+    parser.add_argument("--max-response-size", type=int, default=5*1024*1024, help="Maximum response size in bytes (default: 5MB)")
+    parser.add_argument("--max-items", type=int, default=100, help="Maximum items in response (default: 100)")
     parser.add_argument("--trace", action="store_true", help="Initialize MCP service and print all tools and parameters, then exit (useful for debugging)")
 
     args = parser.parse_args()
@@ -382,7 +403,13 @@ def main():
             tool_shrink=args.tool_shrink,
             allowed_entities=allowed_entities,
             allowed_functions=allowed_functions,
-            sort_tools=args.sort_tools
+            sort_tools=args.sort_tools,
+            pagination_hints=args.pagination_hints,
+            legacy_dates=args.legacy_dates,
+            verbose_errors=args.verbose_errors,
+            response_metadata=args.response_metadata,
+            max_response_size=args.max_response_size,
+            max_items=args.max_items
         )
         
         # Check if trace mode is enabled

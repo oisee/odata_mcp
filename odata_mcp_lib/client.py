@@ -5,6 +5,7 @@ OData v2 client for making API requests with CSRF token handling and response op
 import asyncio
 import json
 import sys
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, quote
@@ -20,12 +21,19 @@ class ODataClient:
 
     def __init__(self, metadata: ODataMetadata, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, 
                  verbose: bool = False, optimize_guids: bool = True,
-                 max_response_items: int = 1000):
+                 max_response_items: int = 1000, pagination_hints: bool = False,
+                 legacy_dates: bool = True, verbose_errors: bool = False,
+                 response_metadata: bool = False, max_response_size: int = 5 * 1024 * 1024):
         self.metadata = metadata
         self.auth = auth
         self.verbose = verbose
         self.optimize_guids = optimize_guids
         self.max_response_items = max_response_items
+        self.pagination_hints = pagination_hints
+        self.legacy_dates = legacy_dates
+        self.verbose_errors = verbose_errors
+        self.response_metadata = response_metadata
+        self.max_response_size = max_response_size
         self.guid_handler = ODataGUIDHandler()
         self.base_url = metadata.service_url
         self.session = requests.Session()
@@ -57,6 +65,12 @@ class ODataClient:
         
         # Identify GUID fields from metadata
         self._identify_guid_fields()
+        
+        # Identify date/time fields from metadata
+        self._identify_date_fields()
+        
+        # Identify decimal fields from metadata
+        self._identify_decimal_fields()
 
     def _log_verbose(self, message: str):
         """Prints message to stderr only if verbose mode is enabled."""
@@ -83,6 +97,157 @@ class ODataClient:
             self.guid_fields_by_entity[entity_name] = guid_fields
             if guid_fields and self.verbose:
                 self._log_verbose(f"Identified GUID fields for {entity_name}: {guid_fields}")
+    
+    def _identify_date_fields(self):
+        """Identify fields that are date/time types based on metadata."""
+        self.date_fields_by_entity = {}
+        
+        for entity_name, entity_type in self.metadata.entity_types.items():
+            date_fields = []
+            for prop in entity_type.properties:
+                # Date/time types in OData
+                if prop.type in ['Edm.DateTime', 'Edm.DateTimeOffset', 'Edm.Time']:
+                    date_fields.append(prop.name)
+            
+            self.date_fields_by_entity[entity_name] = date_fields
+            if date_fields and self.verbose:
+                self._log_verbose(f"Identified date fields for {entity_name}: {date_fields}")
+    
+    def _identify_decimal_fields(self):
+        """Identify fields that are Edm.Decimal type based on metadata."""
+        self.decimal_fields_by_entity = {}
+        
+        for entity_name, entity_type in self.metadata.entity_types.items():
+            decimal_fields = []
+            for prop in entity_type.properties:
+                # Decimal types that may need string conversion
+                if prop.type == 'Edm.Decimal':
+                    decimal_fields.append(prop.name)
+            
+            self.decimal_fields_by_entity[entity_name] = decimal_fields
+            if decimal_fields and self.verbose:
+                self._log_verbose(f"Identified decimal fields for {entity_name}: {decimal_fields}")
+    
+    def _convert_legacy_dates_to_iso(self, data: Any, entity_type: Optional[str] = None) -> Any:
+        """Convert legacy /Date(milliseconds)/ format to ISO 8601."""
+        if not self.legacy_dates:
+            return data
+            
+        if isinstance(data, dict):
+            date_fields = self.date_fields_by_entity.get(entity_type, []) if entity_type else []
+            result = {}
+            for key, value in data.items():
+                if key == 'results' and isinstance(value, list):
+                    # Handle collection responses
+                    result[key] = [self._convert_legacy_dates_to_iso(item, entity_type) for item in value]
+                elif key == '__metadata':
+                    # Include metadata only if response_metadata is True
+                    if self.response_metadata:
+                        result[key] = value
+                elif isinstance(value, str) and (key in date_fields or self._is_legacy_date(value)):
+                    # Convert legacy date format
+                    converted = self._parse_legacy_date(value)
+                    result[key] = converted if converted else value
+                elif isinstance(value, dict):
+                    # Recursively process nested objects
+                    result[key] = self._convert_legacy_dates_to_iso(value)
+                elif isinstance(value, list):
+                    # Process arrays
+                    result[key] = [self._convert_legacy_dates_to_iso(item) for item in value]
+                else:
+                    result[key] = value
+            return result
+        elif isinstance(data, list):
+            return [self._convert_legacy_dates_to_iso(item, entity_type) for item in data]
+        else:
+            return data
+    
+    def _is_legacy_date(self, value: str) -> bool:
+        """Check if a string value is in legacy date format."""
+        if isinstance(value, str):
+            return bool(re.match(r'^/Date\(-?\d+\)/$', value))
+        return False
+    
+    def _parse_legacy_date(self, date_str: str) -> Optional[str]:
+        """Parse legacy /Date(milliseconds)/ format to ISO 8601."""
+        match = re.match(r'^/Date\((-?\d+)\)/$', date_str)
+        if match:
+            try:
+                milliseconds = int(match.group(1))
+                # Convert milliseconds to seconds
+                timestamp = milliseconds / 1000.0
+                # Create datetime and format as ISO 8601
+                dt = datetime.utcfromtimestamp(timestamp)
+                return dt.isoformat() + 'Z'
+            except (ValueError, OverflowError, OSError):
+                # Handle invalid timestamps
+                self._log_verbose(f"Warning: Could not parse legacy date {date_str}")
+                return None
+        return None
+    
+    def _convert_iso_dates_to_legacy(self, data: Any, entity_type: Optional[str] = None) -> Any:
+        """Convert ISO 8601 dates to legacy /Date(milliseconds)/ format for requests."""
+        if not self.legacy_dates:
+            return data
+            
+        if isinstance(data, dict):
+            date_fields = self.date_fields_by_entity.get(entity_type, []) if entity_type else []
+            result = {}
+            for key, value in data.items():
+                if isinstance(value, str) and key in date_fields:
+                    # Try to parse as ISO date
+                    legacy = self._iso_to_legacy_date(value)
+                    result[key] = legacy if legacy else value
+                elif isinstance(value, dict):
+                    result[key] = self._convert_iso_dates_to_legacy(value)
+                elif isinstance(value, list):
+                    result[key] = [self._convert_iso_dates_to_legacy(item) for item in value]
+                else:
+                    result[key] = value
+            return result
+        elif isinstance(data, list):
+            return [self._convert_iso_dates_to_legacy(item, entity_type) for item in data]
+        else:
+            return data
+    
+    def _iso_to_legacy_date(self, iso_str: str) -> Optional[str]:
+        """Convert ISO 8601 date to legacy /Date(milliseconds)/ format."""
+        try:
+            # Parse ISO date (handle with/without timezone)
+            if iso_str.endswith('Z'):
+                dt = datetime.fromisoformat(iso_str[:-1] + '+00:00')
+            else:
+                dt = datetime.fromisoformat(iso_str)
+            
+            # Convert to milliseconds since epoch
+            timestamp = dt.timestamp()
+            milliseconds = int(timestamp * 1000)
+            return f"/Date({milliseconds})/"
+        except (ValueError, AttributeError):
+            return None
+    
+    def _convert_decimals_for_request(self, data: Any, entity_type: Optional[str] = None) -> Any:
+        """Convert numeric values to strings for Edm.Decimal fields."""
+        if isinstance(data, dict):
+            decimal_fields = self.decimal_fields_by_entity.get(entity_type, []) if entity_type else []
+            result = {}
+            
+            for key, value in data.items():
+                # Check if field is decimal and value is numeric
+                if key in decimal_fields and isinstance(value, (int, float)):
+                    # Convert to string to preserve precision
+                    result[key] = str(value)
+                elif isinstance(value, dict):
+                    result[key] = self._convert_decimals_for_request(value)
+                elif isinstance(value, list):
+                    result[key] = [self._convert_decimals_for_request(item) for item in value]
+                else:
+                    result[key] = value
+            return result
+        elif isinstance(data, list):
+            return [self._convert_decimals_for_request(item, entity_type) for item in data]
+        else:
+            return data
 
     def _fetch_csrf_token(self):
         """Fetch CSRF token required by some SAP OData services for modifying requests."""
@@ -226,6 +391,22 @@ class ODataClient:
 
     def _parse_odata_error(self, response: requests.Response) -> str:
         """Attempt to extract a meaningful error message from OData error response."""
+        # If verbose_errors is disabled, return simplified error
+        if not self.verbose_errors:
+            try:
+                if response.json():
+                    data = response.json()
+                    if 'error' in data and 'message' in data['error']:
+                        msg = data['error']['message']
+                        if isinstance(msg, dict) and 'value' in msg:
+                            return msg['value']
+                        elif isinstance(msg, str):
+                            return msg
+                return f"HTTP {response.status_code}: {response.reason}"
+            except:
+                return f"HTTP {response.status_code}: {response.reason}"
+        
+        # Verbose errors enabled - continue with detailed parsing
         try:
             # First check if response has content
             if not response.content:
@@ -364,7 +545,13 @@ class ODataClient:
                 parsed = data
             
             # Optimize the response if enabled
-            return self._optimize_response(parsed, response)
+            optimized = self._optimize_response(parsed, response)
+            
+            # Convert legacy dates if enabled
+            entity_type = self._guess_entity_type_from_url(response.request.url)
+            converted = self._convert_legacy_dates_to_iso(optimized, entity_type)
+            
+            return converted
             
         except json.JSONDecodeError:
             # Error, print regardless of verbosity
@@ -377,6 +564,10 @@ class ODataClient:
     
     def _optimize_response(self, data: Any, response: requests.Response) -> Any:
         """Optimize response data by converting GUIDs and limiting size."""
+        # Check response size first
+        if self.max_response_size and len(response.content) > self.max_response_size:
+            raise ValueError(f"Response size ({len(response.content)} bytes) exceeds maximum allowed ({self.max_response_size} bytes)")
+        
         # Skip optimization if disabled
         if not self.optimize_guids:
             return data
@@ -429,6 +620,21 @@ class ODataClient:
             # If entity has most of the type's properties, it's likely that type
             if len(entity_props & type_props) >= len(type_props) * 0.7:
                 return entity_type
+        
+        return None
+    
+    def _guess_entity_type_from_url(self, url: str) -> Optional[str]:
+        """Guess entity type from URL pattern."""
+        # Extract entity set name from URL
+        parsed = urlparse(url)
+        path_parts = parsed.path.strip('/').split('/')
+        
+        for part in path_parts:
+            # Remove key predicate if present
+            entity_set_name = part.split('(')[0]
+            if entity_set_name in self.metadata.entity_sets:
+                entity_set = self.metadata.entity_sets[entity_set_name]
+                return entity_set.entity_type.split('.')[-1]
         
         return None
 
@@ -577,8 +783,22 @@ class ODataClient:
                     results = [results]
 
             final_response = {"results": results}
-            if pagination:
+            
+            # Add pagination info
+            if self.pagination_hints and pagination:
                 final_response["pagination"] = pagination
+                # Add suggested_next_call at top level for convenience
+                if 'suggested_next_call' in pagination:
+                    final_response['suggested_next_call'] = pagination['suggested_next_call']
+            elif pagination and not self.pagination_hints:
+                # Still include basic pagination info (has_more, total_count) even without hints
+                basic_pagination = {}
+                if 'has_more' in pagination:
+                    basic_pagination['has_more'] = pagination['has_more']
+                if 'total_count' in pagination:
+                    basic_pagination['total_count'] = pagination['total_count']
+                if basic_pagination:
+                    final_response["pagination"] = basic_pagination
 
             return final_response
 
@@ -684,14 +904,24 @@ class ODataClient:
         entity_set = self.metadata.entity_sets.get(entity_set_name)
         if not entity_set: raise ValueError(f"Unknown entity set: {entity_set_name}")
         if not entity_set.creatable: raise ValueError(f"Entity set {entity_set_name} not configured as creatable.")
+        
+        # Get entity type for field conversion
+        entity_type = self.metadata.entity_types.get(entity_set.entity_type)
+        entity_type_name = entity_type.name if entity_type else None
 
         url = f"{self.base_url}/{entity_set_name}"
         params = {}  # No query params for POST
+        
+        # Convert dates to legacy format if needed
+        converted_data = self._convert_iso_dates_to_legacy(entity_data, entity_type_name)
+        
+        # Convert decimals to strings if needed
+        final_data = self._convert_decimals_for_request(converted_data, entity_type_name)
 
         try:
             self._log_verbose(f"Requesting: POST {url} with data {entity_data}")
             response = await asyncio.to_thread(
-                self._make_request, 'POST', url, params=params, json=entity_data, requires_csrf=True
+                self._make_request, 'POST', url, params=params, json=final_data, requires_csrf=True
             )
             # Check for 201 Created specifically, then parse
             if response.status_code == 201:
@@ -723,30 +953,38 @@ class ODataClient:
         if not entity_set.updatable: raise ValueError(f"Entity set {entity_set_name} not configured as updatable.")
         entity_type = self.metadata.entity_types.get(entity_set.entity_type)
         if not entity_type: raise ValueError(f"Unknown entity type: {entity_set.entity_type}")
+        
+        entity_type_name = entity_type.name
 
         key_str = self._build_key_string(entity_type, key_values)
         url = f"{self.base_url}/{entity_set_name}{key_str}"
         params = {}  # No query params for MERGE/PUT/PATCH
+        
+        # Convert dates to legacy format if needed
+        converted_data = self._convert_iso_dates_to_legacy(entity_data, entity_type_name)
+        
+        # Convert decimals to strings if needed
+        final_data = self._convert_decimals_for_request(converted_data, entity_type_name)
 
         try:
             # Prefer MERGE for partial updates (standard in OData v2/v3)
             self._log_verbose(f"Requesting: MERGE {url} with data {entity_data}")
             response = await asyncio.to_thread(
-                self._make_request, 'MERGE', url, params=params, json=entity_data, requires_csrf=True
+                self._make_request, 'MERGE', url, params=params, json=final_data, requires_csrf=True
             )
             # Some servers might expect PATCH or PUT
             if response.status_code == 405:  # Method Not Allowed, try PUT
                 self._log_verbose("MERGE not allowed for update, trying PUT...")
                 self._log_verbose(f"Requesting: PUT {url} with data {entity_data}")
                 response = await asyncio.to_thread(
-                    self._make_request, 'PUT', url, params=params, json=entity_data, requires_csrf=True
+                    self._make_request, 'PUT', url, params=params, json=final_data, requires_csrf=True
                 )
                 # If PUT also fails, maybe try PATCH? Less common for v2 update.
                 if response.status_code == 405:
                     self._log_verbose("PUT not allowed for update, trying PATCH...")
                     self._log_verbose(f"Requesting: PATCH {url} with data {entity_data}")
                     response = await asyncio.to_thread(
-                        self._make_request, 'PATCH', url, params=params, json=entity_data, requires_csrf=True
+                        self._make_request, 'PATCH', url, params=params, json=final_data, requires_csrf=True
                     )
 
             # Update often returns 204 No Content on success

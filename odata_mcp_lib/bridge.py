@@ -32,7 +32,9 @@ class ODataMCPBridge:
 
     def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, mcp_name: str = "odata-mcp", verbose: bool = False, 
                  tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True, tool_shrink: bool = False,
-                 allowed_entities: Optional[List[str]] = None, allowed_functions: Optional[List[str]] = None, sort_tools: bool = True):
+                 allowed_entities: Optional[List[str]] = None, allowed_functions: Optional[List[str]] = None, sort_tools: bool = True,
+                 pagination_hints: bool = False, legacy_dates: bool = True, verbose_errors: bool = False,
+                 response_metadata: bool = False, max_response_size: int = 5 * 1024 * 1024, max_items: int = 100):
         self.service_url = service_url
         self.auth = auth
         self.verbose = verbose
@@ -40,6 +42,12 @@ class ODataMCPBridge:
         self.allowed_entities = allowed_entities
         self.allowed_functions = allowed_functions
         self.sort_tools = sort_tools
+        self.pagination_hints = pagination_hints
+        self.legacy_dates = legacy_dates
+        self.verbose_errors = verbose_errors
+        self.response_metadata = response_metadata
+        self.max_response_size = max_response_size
+        self.max_items = max_items
         self.mcp = FastMCP(name=mcp_name, timeout=120)  # Increased timeout
         self.registered_entity_tools = {}
         self.registered_function_tools = []
@@ -79,7 +87,12 @@ class ODataMCPBridge:
                 auth, 
                 verbose=self.verbose,
                 optimize_guids=True,  # Enable GUID optimization by default
-                max_response_items=1000  # Limit response size
+                max_response_items=self.max_items,
+                pagination_hints=self.pagination_hints,
+                legacy_dates=self.legacy_dates,
+                verbose_errors=self.verbose_errors,
+                response_metadata=self.response_metadata,
+                max_response_size=self.max_response_size
             )
             self._log_verbose("OData Client Initialized.")
 
@@ -141,7 +154,7 @@ class ODataMCPBridge:
         
         # Also check function parameters for entity-related hints
         for param in func_import.parameters:
-            param_name = param.get('name', '').upper()
+            param_name = param.name.upper() if hasattr(param, 'name') else ''
             # Check if parameter names match allowed entities
             for entity_pattern in self.allowed_entities:
                 entity_base = entity_pattern.rstrip('*').upper()

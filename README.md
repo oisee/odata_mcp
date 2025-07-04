@@ -102,8 +102,34 @@ ODATA_COOKIE_STRING="session=abc123; token=xyz789"
 | `--read-only-but-functions, -robf` | Hide create, update, delete but allow functions | False |
 | `--hints-file` | Path to hints JSON file | hints.json |
 | `--hint` | Direct hint JSON or text to inject | - |
+| `--info-tool-name` | Custom name for the service info tool | odata_service_info |
 | `--transport` | Transport type: 'stdio' or 'http' (SSE) | stdio |
 | `--http-addr` | HTTP server address (with --transport http) | :8080 |
+
+### Service Info Tool
+
+The wrapper automatically creates a service info tool that provides comprehensive metadata about the OData service:
+
+- **Default name**: `odata_service_info` (with service-specific postfix)
+- **Alias**: `readme` (automatically created for better discoverability)
+- **Custom name**: Use `--info-tool-name` to specify a custom name
+
+This tool is marked as the **RECOMMENDED STARTING POINT** and provides:
+- Service URL and description
+- Available entity sets and their operations
+- Entity types with properties and relationships
+- Function imports with parameters
+- Implementation hints and known issues
+- List of all registered MCP tools
+
+Example:
+```bash
+# Default naming (creates both odata_service_info and readme aliases)
+python odata_mcp.py --service https://example.com/odata/
+
+# Custom naming (no readme alias)
+python odata_mcp.py --service https://example.com/odata/ --info-tool-name get_started
+```
 
 ### Read-Only Modes
 

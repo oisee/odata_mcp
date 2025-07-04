@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Enhanced service info tool discoverability**
+  - Automatic `readme` alias for the `odata_service_info` tool
+  - `--info-tool-name` flag to customize the service info tool name
+  - Enhanced docstring marking it as "RECOMMENDED STARTING POINT"
+  - Tool provides comprehensive service metadata and guidance
+- **Descriptive MCP server naming**
+  - Server name now includes OData service host and path information
+  - Example: "OData MCP - services.odata.org/Northwind.svc"
+  - Makes it easier to identify which service the MCP server wraps
+
+### Fixed
+- **FastMCP timeout parameter issue**
+  - Removed unsupported `timeout=120` parameter from FastMCP initialization
+  - Fixes TypeError with newer FastMCP versions (2.9.2+)
+
+### Added
 - **Read-only mode flags** (`--read-only`/`-ro` and `--read-only-but-functions`/`-robf`)
   - Hide all modifying operations (create, update, delete) in read-only mode
   - Allow function imports in read-only-but-functions mode

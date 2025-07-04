@@ -305,6 +305,9 @@ def main():
     parser.add_argument("--hints-file", help="Path to hints JSON file (defaults to hints.json in same directory as script)")
     parser.add_argument("--hint", help="Direct hint JSON or text to inject into service info")
     
+    # Tool naming options
+    parser.add_argument("--info-tool-name", help="Custom name for the service info tool (default: odata_service_info, also creates 'readme' alias)")
+    
     # Read-only mode options (mutually exclusive)
     readonly_group = parser.add_mutually_exclusive_group()
     readonly_group.add_argument("--read-only", "-ro", action="store_true", help="Hide all modifying operations (create, update, delete, and function imports)")
@@ -473,7 +476,8 @@ def main():
             trace_mcp=args.trace_mcp,
             hints_file=args.hints_file,
             hint=args.hint,
-            transport=transport
+            transport=transport,
+            info_tool_name=args.info_tool_name
         )
         
         # Check if trace mode is enabled

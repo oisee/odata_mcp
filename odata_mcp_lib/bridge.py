@@ -42,7 +42,7 @@ class ODataMCPBridge:
                  response_metadata: bool = False, max_response_size: int = 5 * 1024 * 1024, max_items: int = 100,
                  read_only: bool = False, read_only_but_functions: bool = False,
                  trace_mcp: bool = False, hints_file: Optional[str] = None, hint: Optional[str] = None,
-                 transport: Optional[Transport] = None):
+                 transport: Optional[Transport] = None, info_tool_name: Optional[str] = None):
         self.service_url = service_url
         self.auth = auth
         self.verbose = verbose
@@ -61,6 +61,7 @@ class ODataMCPBridge:
         self.trace_mcp = trace_mcp
         self.transport = transport
         self.trace_file = None
+        self.info_tool_name = info_tool_name
         
         # Set up MCP trace logging if enabled
         if self.trace_mcp:
@@ -76,7 +77,18 @@ class ODataMCPBridge:
         if hint:
             self.hint_manager.set_cli_hint(hint)
             
-        self.mcp = FastMCP(name=mcp_name, timeout=120)  # Increased timeout
+        # Create descriptive server name that includes service info
+        parsed_url = urlparse(service_url)
+        service_host = parsed_url.hostname or "unknown"
+        service_path = parsed_url.path.strip('/').split('/')[-1] if parsed_url.path else "odata"
+        
+        # If mcp_name is the default, make it more descriptive
+        if mcp_name == "odata-mcp":
+            descriptive_name = f"OData MCP - {service_host}/{service_path}"
+        else:
+            descriptive_name = mcp_name
+            
+        self.mcp = FastMCP(name=descriptive_name)
         self.registered_entity_tools = {}
         self.registered_function_tools = []
         self.all_registered_tools = {}  # Track all tools for trace functionality
@@ -857,7 +869,17 @@ class ODataMCPBridge:
     def add_service_info_tool(self):
         """Add a tool to provide information about the OData service structure."""
         async def odata_service_info() -> str:
-            """Provides metadata about the configured OData service, including available entity sets, entity types, function imports, and registered tools."""
+            """RECOMMENDED STARTING POINT: Get comprehensive information about this OData service.
+            
+            This tool provides essential metadata about the configured OData service, including:
+            - Service URL and description
+            - Available entity sets and their operations (create, read, update, delete)
+            - Entity types with properties and relationships
+            - Function imports with parameters
+            - Registered MCP tools for each entity/function
+            - Implementation hints and known issues (if applicable)
+            
+            Always call this tool first to understand the service structure before using other tools."""
             # Use previously stored registration info for tools
             registered_entity_tools_summary = {}
             entity_items = list(self.registered_entity_tools.items())
@@ -954,12 +976,23 @@ class ODataMCPBridge:
                 return json.dumps({"error": "Could not serialize service metadata."})
 
         try:
-            # Register tool with appropriate naming
-            tool_name = self._make_tool_name("odata_service_info")
+            # Use custom name if provided, otherwise use default
+            if self.info_tool_name:
+                tool_name = self._make_tool_name(self.info_tool_name)
+            else:
+                tool_name = self._make_tool_name("odata_service_info")
+            
             self.mcp.add_tool(odata_service_info, name=tool_name)
             # Track the tool for trace functionality
             self.all_registered_tools[tool_name] = odata_service_info
             self._log_verbose(f"Registered tool: {tool_name}")
+            
+            # Also register with 'readme' alias if not using custom name
+            if not self.info_tool_name:
+                readme_name = self._make_tool_name("readme")
+                self.mcp.add_tool(odata_service_info, name=readme_name)
+                self.all_registered_tools[readme_name] = odata_service_info
+                self._log_verbose(f"Registered tool alias: {readme_name}")
         except Exception as e:
             # Error, print regardless of verbosity
             print(f"ERROR: Error registering odata_service_info tool: {e}", file=sys.stderr)
@@ -1021,7 +1054,8 @@ class ODataMCPBridge:
                         },
                         "serverInfo": {
                             "name": self.mcp.name,
-                            "version": "1.0.0"
+                            "version": "1.3.0",
+                            "description": f"OData MCP Bridge for {self.service_url}"
                         }
                     }
                 )

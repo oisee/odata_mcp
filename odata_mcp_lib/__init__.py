@@ -14,6 +14,7 @@ from .metadata_parser import MetadataParser
 from .client import ODataClient
 from .bridge import ODataMCPBridge
 from .name_shortener import NameShortener
+from .hint_manager import HintManager
 
 __all__ = [
     'EntityProperty',
@@ -25,5 +26,6 @@ __all__ = [
     'MetadataParser',
     'ODataClient',
     'ODataMCPBridge',
-    'NameShortener'
+    'NameShortener',
+    'HintManager'
 ]

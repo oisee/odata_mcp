@@ -92,6 +92,24 @@ def print_trace_info(bridge):
     print(f"   • Max Response Size: {bridge.max_response_size:,} bytes")
     print(f"   • Max Items: {bridge.max_items}")
     
+    # Read-only status
+    if bridge.read_only:
+        print(f"   • 🔒 Read-Only Mode: ENABLED (all modifying operations hidden)")
+    elif bridge.read_only_but_functions:
+        print(f"   • 🔒 Read-Only Mode: PARTIAL (create/update/delete hidden, functions allowed)")
+    else:
+        print(f"   • 🔓 Read-Only Mode: DISABLED (all operations allowed)")
+    
+    # Hint configuration
+    print(f"\n💡 Hint Configuration:")
+    if bridge.hint_manager.hints_file:
+        print(f"   • Hints File: {bridge.hint_manager.hints_file}")
+        print(f"   • Loaded Hints: {len(bridge.hint_manager.hints)} patterns")
+    else:
+        print(f"   • Hints File: None (using default search)")
+    if bridge.hint_manager.cli_hint:
+        print(f"   • CLI Hint: Present (priority 1000)")
+    
     # Entity/Function Filters
     if bridge.allowed_entities:
         print(f"🎯 Entity Filter: {', '.join(bridge.allowed_entities)}")
@@ -281,6 +299,16 @@ def main():
     parser.add_argument("--max-response-size", type=int, default=5*1024*1024, help="Maximum response size in bytes (default: 5MB)")
     parser.add_argument("--max-items", type=int, default=100, help="Maximum items in response (default: 100)")
     parser.add_argument("--trace", action="store_true", help="Initialize MCP service and print all tools and parameters, then exit (useful for debugging)")
+    parser.add_argument("--trace-mcp", action="store_true", help="Enable detailed MCP protocol trace logging to a file")
+    
+    # Hint options
+    parser.add_argument("--hints-file", help="Path to hints JSON file (defaults to hints.json in same directory as script)")
+    parser.add_argument("--hint", help="Direct hint JSON or text to inject into service info")
+    
+    # Read-only mode options (mutually exclusive)
+    readonly_group = parser.add_mutually_exclusive_group()
+    readonly_group.add_argument("--read-only", "-ro", action="store_true", help="Hide all modifying operations (create, update, delete, and function imports)")
+    readonly_group.add_argument("--read-only-but-functions", "-robf", action="store_true", help="Hide create, update, and delete operations but still allow function imports")
     
     # Transport options
     parser.add_argument("--transport", choices=["stdio", "http", "sse"], default="stdio", help="Transport type: 'stdio' (default) or 'http' (SSE)")
@@ -440,6 +468,11 @@ def main():
             response_metadata=args.response_metadata,
             max_response_size=args.max_response_size,
             max_items=args.max_items,
+            read_only=args.read_only,
+            read_only_but_functions=args.read_only_but_functions,
+            trace_mcp=args.trace_mcp,
+            hints_file=args.hints_file,
+            hint=args.hint,
             transport=transport
         )
         

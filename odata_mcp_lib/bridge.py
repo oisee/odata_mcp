@@ -9,6 +9,8 @@ import sys
 import signal
 import traceback
 import fnmatch
+import tempfile
+import platform
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse
@@ -27,6 +29,7 @@ from .models import EntityProperty, EntityType, FunctionImport
 from .metadata_parser import MetadataParser
 from .client import ODataClient
 from .name_shortener import NameShortener
+from .hint_manager import HintManager
 
 
 class ODataMCPBridge:
@@ -37,6 +40,8 @@ class ODataMCPBridge:
                  allowed_entities: Optional[List[str]] = None, allowed_functions: Optional[List[str]] = None, sort_tools: bool = True,
                  pagination_hints: bool = False, legacy_dates: bool = True, verbose_errors: bool = False,
                  response_metadata: bool = False, max_response_size: int = 5 * 1024 * 1024, max_items: int = 100,
+                 read_only: bool = False, read_only_but_functions: bool = False,
+                 trace_mcp: bool = False, hints_file: Optional[str] = None, hint: Optional[str] = None,
                  transport: Optional[Transport] = None):
         self.service_url = service_url
         self.auth = auth
@@ -51,7 +56,26 @@ class ODataMCPBridge:
         self.response_metadata = response_metadata
         self.max_response_size = max_response_size
         self.max_items = max_items
+        self.read_only = read_only
+        self.read_only_but_functions = read_only_but_functions
+        self.trace_mcp = trace_mcp
         self.transport = transport
+        self.trace_file = None
+        
+        # Set up MCP trace logging if enabled
+        if self.trace_mcp:
+            self._setup_trace_logging()
+            
+        # Set up hint manager
+        self.hint_manager = HintManager(verbose=self.verbose)
+        
+        # Load hints from file
+        self.hint_manager.load_from_file(hints_file)
+        
+        # Set CLI hint if provided
+        if hint:
+            self.hint_manager.set_cli_hint(hint)
+            
         self.mcp = FastMCP(name=mcp_name, timeout=120)  # Increased timeout
         self.registered_entity_tools = {}
         self.registered_function_tools = []
@@ -103,6 +127,10 @@ class ODataMCPBridge:
             self._log_verbose("Registering MCP Tools...")
             if self.allowed_entities:
                 self._log_verbose(f"Entity filter active - only generating tools for: {', '.join(self.allowed_entities)}")
+            if self.read_only:
+                self._log_verbose("Read-only mode active - hiding all modifying operations (create, update, delete, and function imports)")
+            elif self.read_only_but_functions:
+                self._log_verbose("Read-only-but-functions mode active - hiding create, update, and delete operations but allowing function imports")
             self._register_tools()
             self._log_verbose("MCP Tools Registered.")
 
@@ -119,6 +147,51 @@ class ODataMCPBridge:
         if self.verbose:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
             print(f"[{timestamp} Bridge VERBOSE] {message}", file=sys.stderr)
+    
+    def _setup_trace_logging(self):
+        """Set up MCP trace logging to a file."""
+        try:
+            # Determine trace file location based on platform
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            if platform.system() == 'Windows':
+                trace_dir = tempfile.gettempdir()
+            else:
+                trace_dir = '/tmp'
+            
+            trace_filename = f"mcp_trace_{timestamp}.log"
+            trace_path = f"{trace_dir}/{trace_filename}"
+            
+            self.trace_file = open(trace_path, 'w')
+            self._log_verbose(f"MCP trace logging enabled - writing to: {trace_path}")
+            
+            # Write initial header
+            self.trace_file.write(f"=== MCP Trace Log Started at {datetime.now().isoformat()} ===\n")
+            self.trace_file.write(f"Service URL: {self.service_url}\n")
+            self.trace_file.write(f"Platform: {platform.system()} {platform.release()}\n")
+            self.trace_file.write("===\n\n")
+            self.trace_file.flush()
+        except Exception as e:
+            print(f"WARNING: Failed to set up MCP trace logging: {e}", file=sys.stderr)
+            self.trace_mcp = False
+    
+    def _log_mcp_message(self, direction: str, message: Any):
+        """Log an MCP message to the trace file."""
+        if not self.trace_mcp or not self.trace_file:
+            return
+            
+        try:
+            timestamp = datetime.now().isoformat()
+            self.trace_file.write(f"[{timestamp}] {direction}:\n")
+            if isinstance(message, (dict, list)):
+                self.trace_file.write(json.dumps(message, indent=2, default=str))
+            else:
+                self.trace_file.write(str(message))
+            self.trace_file.write("\n\n")
+            self.trace_file.flush()
+        except Exception as e:
+            # Don't let trace logging failures break the main functionality
+            if self.verbose:
+                print(f"WARNING: Failed to write to MCP trace log: {e}", file=sys.stderr)
     
     def _matches_entity_filter(self, entity_name: str, patterns: List[str]) -> bool:
         """Check if an entity name matches any of the provided patterns (supports wildcards)."""
@@ -669,7 +742,8 @@ class ODataMCPBridge:
                 except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
 
             # --- CRUD Tools (conditional) ---
-            if entity_set.creatable:
+            # Skip create/update/delete tools in read-only modes
+            if entity_set.creatable and not self.read_only and not self.read_only_but_functions:
                 try:
                     tool_name = self._make_tool_name(f"create_{es_name}")
                     # Include ALL properties for create (including keys that may need to be specified)
@@ -687,7 +761,7 @@ class ODataMCPBridge:
                     if registered_name: self.registered_entity_tools[es_name].append(registered_name)
                 except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
 
-            if entity_set.updatable and key_props:  # Need keys to update
+            if entity_set.updatable and key_props and not self.read_only and not self.read_only_but_functions:  # Need keys to update
                 try:
                     tool_name = self._make_tool_name(f"update_{es_name}")
                     # Params are keys (required) + non-keys (optional)
@@ -707,7 +781,7 @@ class ODataMCPBridge:
                     if registered_name: self.registered_entity_tools[es_name].append(registered_name)
                 except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
 
-            if entity_set.deletable and key_props:  # Need keys to delete
+            if entity_set.deletable and key_props and not self.read_only and not self.read_only_but_functions:  # Need keys to delete
                 try:
                     tool_name = self._make_tool_name(f"delete_{es_name}")
                     params = self._get_param_defs_for_keys(key_props)
@@ -725,33 +799,37 @@ class ODataMCPBridge:
                 except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
 
         # --- Function Import Tools ---
-        for func_name, func_import in self.metadata.function_imports.items():
-            # Check if this function matches any filter pattern (if specified)
-            if self.allowed_functions and not self._matches_function_filter(func_name, self.allowed_functions):
-                self._log_verbose(f"Skipping Function '{func_name}' - doesn't match any function filter pattern")
-                continue
-            
-            # Check if this function relates to entities that are filtered out
-            if self.allowed_entities and not self._function_relates_to_allowed_entities(func_name, func_import):
-                self._log_verbose(f"Skipping Function '{func_name}' - relates to entities not in allowed list")
-                continue
+        # Skip function tools if in full read-only mode
+        if not self.read_only:
+            for func_name, func_import in self.metadata.function_imports.items():
+                # Check if this function matches any filter pattern (if specified)
+                if self.allowed_functions and not self._matches_function_filter(func_name, self.allowed_functions):
+                    self._log_verbose(f"Skipping Function '{func_name}' - doesn't match any function filter pattern")
+                    continue
                 
-            try:
-                # Params based on function import definition
-                params = self._get_param_defs(func_import.parameters)  # Required based on nullability
-                base_desc = f"Invoke the OData function import '{func_name}'.\nHTTP Method: {func_import.http_method}"
-                doc = self._format_docstring(base_desc, params, func_import.description)
-                # Capture current instance, func_name and func_import in closure
-                def make_logic(instance, fn, fi):
-                    async def logic(**kwargs):
-                        return await instance._impl_invoke_function(function_name=fn, function_import=fi, **kwargs)
-                    return logic
-                logic = make_logic(self, func_name, func_import)
+                # Check if this function relates to entities that are filtered out
+                if self.allowed_entities and not self._function_relates_to_allowed_entities(func_name, func_import):
+                    self._log_verbose(f"Skipping Function '{func_name}' - relates to entities not in allowed list")
+                    continue
+                
+                try:
+                    # Params based on function import definition
+                    params = self._get_param_defs(func_import.parameters)  # Required based on nullability
+                    base_desc = f"Invoke the OData function import '{func_name}'.\nHTTP Method: {func_import.http_method}"
+                    doc = self._format_docstring(base_desc, params, func_import.description)
+                    # Capture current instance, func_name and func_import in closure
+                    def make_logic(instance, fn, fi):
+                        async def logic(**kwargs):
+                            return await instance._impl_invoke_function(function_name=fn, function_import=fi, **kwargs)
+                        return logic
+                    logic = make_logic(self, func_name, func_import)
 
-                tool_name = self._make_tool_name(func_name)
-                registered_name = self._create_and_register_tool(tool_name, params, doc, logic)
-                if registered_name: self.registered_function_tools.append(registered_name)
-            except Exception as e: print(f"ERROR registering function {func_name}: {e}", file=sys.stderr)
+                    tool_name = self._make_tool_name(func_name)
+                    registered_name = self._create_and_register_tool(tool_name, params, doc, logic)
+                    if registered_name: self.registered_function_tools.append(registered_name)
+                except Exception as e: print(f"ERROR registering function {func_name}: {e}", file=sys.stderr)
+        elif self.verbose:
+            self._log_verbose("Skipping all function imports due to --read-only mode")
 
         # --- Log Summary (only if verbose) ---
         if self.verbose:
@@ -774,6 +852,7 @@ class ODataMCPBridge:
                 func_tools = sorted(self.registered_function_tools) if self.sort_tools else self.registered_function_tools
                 print(f"- Function Imports: {', '.join(func_tools)}", file=sys.stderr)
             print("-------------------------------\n", file=sys.stderr)
+    
 
     def add_service_info_tool(self):
         """Add a tool to provide information about the OData service structure."""
@@ -861,6 +940,11 @@ class ODataMCPBridge:
                 "registered_entity_tools_summary": registered_entity_tools_summary,  # Summary of tools per entity set
                 "registered_function_tools": sorted(self.registered_function_tools) if self.sort_tools else self.registered_function_tools
             }
+            
+            # Get hints from hint manager
+            implementation_hints = self.hint_manager.get_hints(self.metadata.service_url)
+            if implementation_hints:
+                info["implementation_hints"] = implementation_hints
             try:
                 # Use default=str for complex objects that might not be serializable otherwise
                 return json.dumps(info, indent=2, default=str)
@@ -880,24 +964,37 @@ class ODataMCPBridge:
             # Error, print regardless of verbosity
             print(f"ERROR: Error registering odata_service_info tool: {e}", file=sys.stderr)
 
+    def _cleanup(self):
+        """Clean up resources like trace file."""
+        if self.trace_file:
+            try:
+                self.trace_file.write(f"\n=== MCP Trace Log Ended at {datetime.now().isoformat()} ===\n")
+                self.trace_file.close()
+                self._log_verbose("MCP trace log file closed")
+            except Exception:
+                pass  # Ignore cleanup errors
+    
     def run(self):
         """Run the MCP server."""
-        # Log startup message only if verbose
-        self._log_verbose(f"Starting OData MCP bridge for service: {self.service_url}")
-        self._log_verbose(f"MCP Server Name: {self.mcp.name}")
-        if not self.metadata.entity_sets:
-            # Warning, print only if verbose
-            self._log_verbose("Warning: No entity sets were successfully processed. Tools may be limited.")
+        try:
+            # Log startup message only if verbose
+            self._log_verbose(f"Starting OData MCP bridge for service: {self.service_url}")
+            self._log_verbose(f"MCP Server Name: {self.mcp.name}")
+            if not self.metadata.entity_sets:
+                # Warning, print only if verbose
+                self._log_verbose("Warning: No entity sets were successfully processed. Tools may be limited.")
 
-        # If transport is provided, use it; otherwise use FastMCP's default
-        if self.transport:
-            # Set up message handler
-            self.transport.handler = self._handle_transport_message
-            # Run transport asynchronously
-            asyncio.run(self._run_with_transport())
-        else:
-            # The FastMCP server run method handles the main loop
-            self.mcp.run()
+            # If transport is provided, use it; otherwise use FastMCP's default
+            if self.transport:
+                # Set up message handler
+                self.transport.handler = self._handle_transport_message
+                # Run transport asynchronously
+                asyncio.run(self._run_with_transport())
+            else:
+                # The FastMCP server run method handles the main loop
+                self.mcp.run()
+        finally:
+            self._cleanup()
     
     async def _run_with_transport(self):
         """Run the MCP server with custom transport."""

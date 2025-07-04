@@ -1,0 +1,109 @@
+{
+  "_description": "OData MCP Bridge Service Hints - Provides guidance for known service issues and workarounds",
+  "_documentation": "See HINTS.md for detailed documentation on the hint system",
+  "_note": "Hints are matched by URL patterns and merged by priority. Higher priority values override lower ones.",
+  "version": "1.0",
+  "hints": [
+    {
+      "pattern": "*/sap/opu/odata/*",
+      "priority": 10,
+      "service_type": "SAP OData Service",
+      "known_issues": [
+        "Some SAP OData services return HTTP 501 Not Implemented for direct entity access",
+        "CSRF token handling may be required for modifying operations",
+        "Date fields may use legacy /Date()/ format",
+        "Some services have case-sensitive field names"
+      ],
+      "workarounds": [
+        "Always check field name casing in $metadata",
+        "Use --legacy-dates flag for proper date handling"
+      ],
+      "notes": [
+        "SAP OData v2 services often have implementation quirks",
+        "Check service $metadata for exact field names and types"
+      ]
+    },
+    {
+      "pattern": "*SRA020_PO_TRACKING_SRV*",
+      "priority": 50,
+      "service_type": "SAP Purchase Order Tracking Service",
+      "known_issues": [
+        "Backend data provider class has incomplete method implementations",
+        "Standard OData operations like GET_ENTITYSET and GET_ENTITY are not implemented for most entity sets",
+        "Direct entity access and basic filtering return HTTP 501 Not Implemented errors",
+        "The PONumber field requires specific formatting",
+        "Service expects numerical PO values despite string type definition",
+        "Leading zeros might be automatically removed by the service"
+      ],
+      "workarounds": [
+        "CRITICAL: Use $expand parameter to trigger alternative code path that bypasses unimplemented methods",
+        "Always include $expand with relevant navigation properties when accessing PODetailedDatas",
+        "Example: get_PODetailedDatas with PONumber and $expand=POItemDetailDatas/POItemDocFlows,POItemDetailDatas/Accountings",
+        "The $expand parameter triggers working navigation property logic instead of failed standard methods",
+        "Always include $select to limit returned fields for performance",
+        "Include $top parameter (5-10 items max) for collection queries"
+      ],
+      "field_hints": {
+        "PONumber": {
+          "type": "Edm.String",
+          "format": "10-digit numeric string",
+          "example": "1234567890",
+          "description": "Purchase Order number - expects numeric values as strings"
+        }
+      },
+      "entity_hints": {
+        "PODetailedDatas": {
+          "description": "Primary PO header information - requires $expand to access",
+          "notes": [
+            "Direct access fails - must use $expand parameter",
+            "Use $expand to get related POItemDetailDatas, POItemDocFlows, Accountings, PricingConditions, Confirmations"
+          ],
+          "examples": [
+            "get_PODetailedDatas(PONumber='1234567890', $expand='POItemDetailDatas/POItemDocFlows,POItemDetailDatas/Accountings', $select='PONumber,Value,Currency,Status')",
+            "get_PODetailedDatas(PONumber='1234567890', $expand='POItemDetailDatas/PricingConditions,POItemDetailDatas/Confirmations')"
+          ]
+        },
+        "POItemDetailDatas": {
+          "description": "Detailed PO line item information",
+          "notes": ["Accessible via navigation from PODetailedDatas"],
+          "navigation_paths": [
+            "PODetailedDatas -> POItemDetailDatas",
+            "POItemDetailDatas -> Confirmations",
+            "POItemDetailDatas -> PricingConditions", 
+            "POItemDetailDatas -> Accountings",
+            "POItemDetailDatas -> POItemDocFlows"
+          ]
+        }
+      },
+      "examples": [
+        {
+          "description": "Get PO with all details using $expand workaround",
+          "query": "get_PODetailedDatas(PONumber='1234567890', $expand='POItemDetailDatas/POItemDocFlows,POItemDetailDatas/Accountings,POItemDetailDatas/PricingConditions,POItemDetailDatas/Confirmations', $select='PONumber,PONumberFormatted,SupplierID,SupplierName,Value,Currency,Status')",
+          "note": "This bypasses the HTTP 501 error from unimplemented backend methods"
+        },
+        {
+          "description": "Access PO items with navigation expansion",
+          "query": "get_PODetailedDatas(PONumber='1234567890', $expand='POItemDetailDatas', $select='PONumber,Value,Currency')",
+          "note": "Use navigation properties to access related data"
+        }
+      ],
+      "notes": [
+        "This service has incomplete backend implementation - standard OData access methods not implemented",
+        "The $expand parameter triggers alternative execution path that works",
+        "Always use $expand with relevant navigation properties for entity access",
+        "Direct filter operations without $expand will fail with HTTP 501",
+        "This is a backend SAP ABAP class implementation issue, not an OData protocol issue"
+      ]
+    },
+    {
+      "pattern": "*Northwind*",
+      "priority": 5,
+      "service_type": "Northwind Demo Service",
+      "notes": [
+        "This is a public demo OData service",
+        "Available in both v2 and v4 versions",
+        "Useful for testing and development"
+      ]
+    }
+  ]
+}

@@ -23,6 +23,9 @@ The OData MCP Wrapper enables seamless integration between OData v2 services and
 - **Pagination Hints**: Suggested next call parameters for easy pagination
 - **Flexible Response Control**: Options for metadata inclusion and error verbosity
 - **Multiple Transport Options**: STDIO (default) and HTTP/SSE for web-based clients
+- **Read-Only Modes**: Options to hide modifying operations for safer exploration
+- **Service-Specific Hints**: Implementation guidance for known problematic services
+- **MCP Protocol Tracing**: Debug logging for troubleshooting client issues
 
 ## Installation
 
@@ -94,8 +97,94 @@ ODATA_COOKIE_STRING="session=abc123; token=xyz789"
 | `--max-response-size` | Maximum response size in bytes | 5242880 (5MB) |
 | `--max-items` | Maximum items per response | 100 |
 | `--trace` | Print all tools and exit (debugging) | False |
+| `--trace-mcp` | Enable detailed MCP protocol trace logging | False |
+| `--read-only, -ro` | Hide all modifying operations (create, update, delete, functions) | False |
+| `--read-only-but-functions, -robf` | Hide create, update, delete but allow functions | False |
+| `--hints-file` | Path to hints JSON file | hints.json |
+| `--hint` | Direct hint JSON or text to inject | - |
 | `--transport` | Transport type: 'stdio' or 'http' (SSE) | stdio |
 | `--http-addr` | HTTP server address (with --transport http) | :8080 |
+
+### Read-Only Modes
+
+The wrapper supports read-only modes for safer exploration of OData services:
+
+- **`--read-only` (`-ro`)**: Hides all modifying operations (create, update, delete, and function imports)
+- **`--read-only-but-functions` (`-robf`)**: Hides create, update, and delete operations but still allows function imports
+
+These modes are mutually exclusive and useful when:
+- Exploring unfamiliar OData services
+- Preventing accidental data modifications
+- Creating read-only MCP endpoints for users
+
+### Service-Specific Hints
+
+The wrapper includes a flexible hint system to provide guidance for services with known issues or special requirements:
+
+```bash
+# Use default hints.json from script directory
+python odata_mcp.py https://my-service.com/odata/
+
+# Use custom hints file
+python odata_mcp.py --hints-file /path/to/custom-hints.json https://my-service.com/odata/
+
+# Inject hint directly from command line
+python odata_mcp.py --hint "Remember to use \$expand for complex queries" https://my-service.com/odata/
+
+# Combine file and CLI hints (CLI has higher priority)
+python odata_mcp.py --hints-file custom.json --hint '{"notes":["Override note"]}' https://my-service.com/odata/
+```
+
+Hints are matched by URL patterns and appear in the `odata_service_info` tool response under `implementation_hints`.
+
+Default hints are provided for:
+- **SAP OData Services**: General SAP-specific issues and workarounds
+- **SAP PO Tracking Service** (SRA020_PO_TRACKING_SRV): Specific guidance for purchase order tracking
+- **Northwind Demo Services**: Identifies public demo services
+
+#### Hint File Structure
+
+The hints.json file follows this structure:
+
+```json
+{
+  "version": "1.0",
+  "hints": [
+    {
+      "pattern": "*/sap/opu/odata/*",
+      "priority": 10,
+      "service_type": "SAP OData Service",
+      "known_issues": [...],
+      "workarounds": [...],
+      "field_hints": {
+        "FieldName": {
+          "type": "Edm.String",
+          "format": "Expected format",
+          "example": "12345"
+        }
+      },
+      "examples": [
+        {
+          "description": "Example description",
+          "query": "filter_EntitySet with $filter=...",
+          "note": "Additional note"
+        }
+      ],
+      "notes": [...]
+    }
+  ]
+}
+```
+
+Patterns support wildcards (* and ?) and are matched against the service URL. Multiple hints can match; they are merged by priority (higher values override).
+
+### MCP Protocol Tracing
+
+Use `--trace-mcp` to enable detailed protocol debugging. This creates a log file with all MCP messages:
+- Linux/WSL: `/tmp/mcp_trace_*.log`
+- Windows: `%TEMP%\mcp_trace_*.log`
+
+Useful for diagnosing client compatibility issues.
 
 ### Command Line Examples
 
@@ -158,6 +247,21 @@ python odata_mcp.py --service https://your-service.com/odata/ \
 python odata_mcp.py --service https://your-service.com/odata/ \
                     --transport http \
                     --http-addr 127.0.0.1:3000
+
+# Read-only mode - hide all modifying operations
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --read-only \
+                    --verbose
+
+# Read-only but allow functions
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --read-only-but-functions \
+                    --verbose
+
+# Enable MCP protocol trace logging for debugging
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --trace-mcp \
+                    --verbose
 ```
 
 ### Generated Tools
@@ -360,6 +464,9 @@ from odata_mcp_compat import MetadataParser, ODataClient, ODataMCPBridge
 - [x] **Feature Parity**: Matched Go implementation features
 - [x] **HTTP/SSE Transport**: Web-based client support via Server-Sent Events
 - [x] **Transport Abstraction**: Clean interface for multiple transport types
+- [x] **Read-Only Modes**: Options to hide modifying operations (--read-only, --read-only-but-functions)
+- [x] **Service Hints**: Implementation guidance for known problematic services
+- [x] **MCP Trace Logging**: Protocol debugging support with --trace-mcp
 
 ## Troubleshooting
 
@@ -389,6 +496,12 @@ from odata_mcp_compat import MetadataParser, ODataClient, ODataMCPBridge
 - Apply `$top` for pagination
 - Use `$filter` to reduce result sets
 - Consider excluding binary fields for large datasets
+
+## Additional Documentation
+
+- [Architecture Guide](ARCHITECTURE.md) - System design and module structure
+- [Implementation Guide](IMPLEMENTATION_GUIDE.md) - Development patterns and guidelines
+- [Cookie Authentication](COOKIE_AUTH.md) - Detailed cookie auth documentation
 
 ## License
 

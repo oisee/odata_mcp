@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Operation type filtering** with `--enable` and `--disable` flags
+  - Fine-grained control over which operation types are generated
+  - Support for operation types: C (create), S (search), F (filter), G (get), U (update), D (delete), A (actions/function imports)
+  - Special R (read) type that expands to S, F, and G operations
+  - Case-insensitive operation codes
+  - Helps reduce tool count for services with many entities (e.g., from 300+ to manageable numbers)
+  - Examples:
+    - `--disable "cud"` - Disable create, update, delete operations
+    - `--enable "r"` - Enable only read operations (search, filter, get)
+    - `--disable "a"` - Disable actions/function imports
 - **Enhanced service info tool discoverability**
   - Automatic `readme` alias for the `odata_service_info` tool
   - `--info-tool-name` flag to customize the service info tool name

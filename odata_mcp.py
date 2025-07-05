@@ -100,6 +100,12 @@ def print_trace_info(bridge):
     else:
         print(f"   • 🔓 Read-Only Mode: DISABLED (all operations allowed)")
     
+    # Operation filters
+    if hasattr(bridge, 'enabled_operations') and bridge.enabled_operations:
+        print(f"   • ✅ Enabled Operations: {', '.join(sorted(bridge.enabled_operations))}")
+    elif hasattr(bridge, 'disabled_operations') and bridge.disabled_operations:
+        print(f"   • ❌ Disabled Operations: {', '.join(sorted(bridge.disabled_operations))}")
+    
     # Hint configuration
     print(f"\n💡 Hint Configuration:")
     if bridge.hint_manager.hints_file:
@@ -313,6 +319,10 @@ def main():
     readonly_group.add_argument("--read-only", "-ro", action="store_true", help="Hide all modifying operations (create, update, delete, and function imports)")
     readonly_group.add_argument("--read-only-but-functions", "-robf", action="store_true", help="Hide create, update, and delete operations but still allow function imports")
     
+    # Operation type filtering options
+    parser.add_argument("--enable", help="Enable only specific operation types: C (create), S (search), F (filter), G (get), U (update), D (delete), A (actions/function imports), R (read - expands to S,F,G). Case-insensitive. Example: --enable 'SFG' or --enable 'R'")
+    parser.add_argument("--disable", help="Disable specific operation types: C (create), S (search), F (filter), G (get), U (update), D (delete), A (actions/function imports). Case-insensitive. Example: --disable 'CUD'")
+    
     # Transport options
     parser.add_argument("--transport", choices=["stdio", "http", "sse"], default="stdio", help="Transport type: 'stdio' (default) or 'http' (SSE)")
     parser.add_argument("--http-addr", default=":8080", help="HTTP server address (used with --transport http)")
@@ -430,6 +440,43 @@ def main():
             if args.verbose:
                 print(f"[VERBOSE] Filtering tools to only these functions: {allowed_functions}", file=sys.stderr)
         
+        # Parse operation type filters
+        enabled_operations = None
+        disabled_operations = None
+        
+        if args.enable and args.disable:
+            print("ERROR: Cannot specify both --enable and --disable options", file=sys.stderr)
+            sys.exit(1)
+            
+        if args.enable:
+            # Convert to uppercase and expand R to S,F,G
+            enabled_operations = set(args.enable.upper())
+            if 'R' in enabled_operations:
+                enabled_operations.remove('R')
+                enabled_operations.update(['S', 'F', 'G'])
+            # Validate operation codes
+            valid_ops = {'C', 'S', 'F', 'G', 'U', 'D', 'A'}
+            invalid_ops = enabled_operations - valid_ops
+            if invalid_ops:
+                print(f"ERROR: Invalid operation codes in --enable: {', '.join(invalid_ops)}", file=sys.stderr)
+                print(f"Valid codes are: C (create), S (search), F (filter), G (get), U (update), D (delete), A (actions), R (read - expands to S,F,G)", file=sys.stderr)
+                sys.exit(1)
+            if args.verbose:
+                print(f"[VERBOSE] Enabled operation types: {', '.join(sorted(enabled_operations))}", file=sys.stderr)
+                
+        if args.disable:
+            # Convert to uppercase
+            disabled_operations = set(args.disable.upper())
+            # Validate operation codes (R not allowed in disable)
+            valid_ops = {'C', 'S', 'F', 'G', 'U', 'D', 'A'}
+            invalid_ops = disabled_operations - valid_ops
+            if invalid_ops:
+                print(f"ERROR: Invalid operation codes in --disable: {', '.join(invalid_ops)}", file=sys.stderr)
+                print(f"Valid codes are: C (create), S (search), F (filter), G (get), U (update), D (delete), A (actions)", file=sys.stderr)
+                sys.exit(1)
+            if args.verbose:
+                print(f"[VERBOSE] Disabled operation types: {', '.join(sorted(disabled_operations))}", file=sys.stderr)
+        
         # Set up transport based on flag
         transport = None
         if args.transport in ["http", "sse"]:
@@ -477,7 +524,9 @@ def main():
             hints_file=args.hints_file,
             hint=args.hint,
             transport=transport,
-            info_tool_name=args.info_tool_name
+            info_tool_name=args.info_tool_name,
+            enabled_operations=enabled_operations,
+            disabled_operations=disabled_operations
         )
         
         # Check if trace mode is enabled

@@ -42,7 +42,8 @@ class ODataMCPBridge:
                  response_metadata: bool = False, max_response_size: int = 5 * 1024 * 1024, max_items: int = 100,
                  read_only: bool = False, read_only_but_functions: bool = False,
                  trace_mcp: bool = False, hints_file: Optional[str] = None, hint: Optional[str] = None,
-                 transport: Optional[Transport] = None, info_tool_name: Optional[str] = None):
+                 transport: Optional[Transport] = None, info_tool_name: Optional[str] = None,
+                 enabled_operations: Optional[set] = None, disabled_operations: Optional[set] = None):
         self.service_url = service_url
         self.auth = auth
         self.verbose = verbose
@@ -62,6 +63,8 @@ class ODataMCPBridge:
         self.transport = transport
         self.trace_file = None
         self.info_tool_name = info_tool_name
+        self.enabled_operations = enabled_operations
+        self.disabled_operations = disabled_operations
         
         # Set up MCP trace logging if enabled
         if self.trace_mcp:
@@ -225,6 +228,29 @@ class ODataMCPBridge:
                 if name == pattern:
                     return True
         return False
+    
+    def _is_operation_allowed(self, operation_type: str) -> bool:
+        """Check if an operation type is allowed based on enable/disable filters.
+        
+        Operation types:
+        - C: Create
+        - S: Search  
+        - F: Filter
+        - G: Get
+        - U: Update
+        - D: Delete
+        - A: Actions/Function imports
+        """
+        # If enabled operations are specified, only those are allowed
+        if self.enabled_operations is not None:
+            return operation_type in self.enabled_operations
+            
+        # If disabled operations are specified, all except those are allowed
+        if self.disabled_operations is not None:
+            return operation_type not in self.disabled_operations
+            
+        # If neither is specified, all operations are allowed
+        return True
     
     def _function_relates_to_allowed_entities(self, func_name: str, func_import: 'FunctionImport') -> bool:
         """Check if a function relates to entities that are in the allowed entities list."""
@@ -665,50 +691,52 @@ class ODataMCPBridge:
             tool_name = None  # Reset for each tool type
 
             # --- List / Filter Tool ---
-            try:
-                tool_name = self._make_tool_name(f"filter_{es_name}")
-                params = [
-                    {'name': 'filter', 'type_hint': 'Optional[str]', 'required': False, 'description': "OData $filter expression"},
-                    {'name': 'select', 'type_hint': 'Optional[str]', 'required': False, 'description': "Comma-separated properties to return"},
-                    {'name': 'expand', 'type_hint': 'Optional[str]', 'required': False, 'description': "Comma-separated navigation properties to expand"},
-                    {'name': 'orderby', 'type_hint': 'Optional[str]', 'required': False, 'description': "Property to sort by"},
-                    {'name': 'top', 'type_hint': 'Optional[int]', 'required': False, 'description': "Maximum number of entities"},
-                    {'name': 'skip', 'type_hint': 'Optional[int]', 'required': False, 'description': "Number of entities to skip"},
-                    {'name': 'skiptoken', 'type_hint': 'Optional[str]', 'required': False, 'description': "Continuation token for pagination"}
-                ]
-                base_desc = f"Retrieve a list of {entity_type.name} entities from the '{es_name}' set."
-                doc = self._format_docstring(base_desc, params, entity_set.description)
-                # Need partial or lambda to pass extra args to impl
-                # Capture current instance and entity_set_name in closure
-                def make_logic(instance, set_name):
-                    async def logic(**kwargs):
-                        return await instance._impl_list_filter(entity_set_name=set_name, **kwargs)
-                    return logic
-                logic = make_logic(self, es_name)
+            if self._is_operation_allowed('F'):
+                try:
+                    tool_name = self._make_tool_name(f"filter_{es_name}")
+                    params = [
+                        {'name': 'filter', 'type_hint': 'Optional[str]', 'required': False, 'description': "OData $filter expression"},
+                        {'name': 'select', 'type_hint': 'Optional[str]', 'required': False, 'description': "Comma-separated properties to return"},
+                        {'name': 'expand', 'type_hint': 'Optional[str]', 'required': False, 'description': "Comma-separated navigation properties to expand"},
+                        {'name': 'orderby', 'type_hint': 'Optional[str]', 'required': False, 'description': "Property to sort by"},
+                        {'name': 'top', 'type_hint': 'Optional[int]', 'required': False, 'description': "Maximum number of entities"},
+                        {'name': 'skip', 'type_hint': 'Optional[int]', 'required': False, 'description': "Number of entities to skip"},
+                        {'name': 'skiptoken', 'type_hint': 'Optional[str]', 'required': False, 'description': "Continuation token for pagination"}
+                    ]
+                    base_desc = f"Retrieve a list of {entity_type.name} entities from the '{es_name}' set."
+                    doc = self._format_docstring(base_desc, params, entity_set.description)
+                    # Need partial or lambda to pass extra args to impl
+                    # Capture current instance and entity_set_name in closure
+                    def make_logic(instance, set_name):
+                        async def logic(**kwargs):
+                            return await instance._impl_list_filter(entity_set_name=set_name, **kwargs)
+                        return logic
+                    logic = make_logic(self, es_name)
 
-                registered_name = self._create_and_register_tool(tool_name, params, doc, logic)
-                if registered_name: self.registered_entity_tools[es_name].append(registered_name)
-            except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
+                    registered_name = self._create_and_register_tool(tool_name, params, doc, logic)
+                    if registered_name: self.registered_entity_tools[es_name].append(registered_name)
+                except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
 
             # --- Count Tool ---
-            try:
-                tool_name = self._make_tool_name(f"count_{es_name}")
-                params = [{'name': 'filter', 'type_hint': 'Optional[str]', 'required': False, 'description': "OData $filter expression"}]
-                base_desc = f"Get the total count of {entity_type.name} entities in the '{es_name}' set."
-                doc = self._format_docstring(base_desc, params, entity_set.description)
-                # Capture current instance and entity_set_name in closure
-                def make_logic(instance, set_name):
-                    async def logic(**kwargs):
-                        return await instance._impl_count(entity_set_name=set_name, **kwargs)
-                    return logic
-                logic = make_logic(self, es_name)
+            if self._is_operation_allowed('F'):
+                try:
+                    tool_name = self._make_tool_name(f"count_{es_name}")
+                    params = [{'name': 'filter', 'type_hint': 'Optional[str]', 'required': False, 'description': "OData $filter expression"}]
+                    base_desc = f"Get the total count of {entity_type.name} entities in the '{es_name}' set."
+                    doc = self._format_docstring(base_desc, params, entity_set.description)
+                    # Capture current instance and entity_set_name in closure
+                    def make_logic(instance, set_name):
+                        async def logic(**kwargs):
+                            return await instance._impl_count(entity_set_name=set_name, **kwargs)
+                        return logic
+                    logic = make_logic(self, es_name)
 
-                registered_name = self._create_and_register_tool(tool_name, params, doc, logic)
-                if registered_name: self.registered_entity_tools[es_name].append(registered_name)
-            except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
+                    registered_name = self._create_and_register_tool(tool_name, params, doc, logic)
+                    if registered_name: self.registered_entity_tools[es_name].append(registered_name)
+                except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
 
             # --- Search Tool (only if searchable) ---
-            if entity_set.searchable:
+            if entity_set.searchable and self._is_operation_allowed('S'):
                 try:
                     tool_name = self._make_tool_name(f"search_{es_name}")
                     params = [
@@ -733,7 +761,7 @@ class ODataMCPBridge:
 
             # --- Get Tool ---
             key_props = entity_type.get_key_properties()
-            if key_props:
+            if key_props and self._is_operation_allowed('G'):
                 try:
                     tool_name = self._make_tool_name(f"get_{es_name}")
                     params = self._get_param_defs_for_keys(key_props)
@@ -755,7 +783,7 @@ class ODataMCPBridge:
 
             # --- CRUD Tools (conditional) ---
             # Skip create/update/delete tools in read-only modes
-            if entity_set.creatable and not self.read_only and not self.read_only_but_functions:
+            if entity_set.creatable and not self.read_only and not self.read_only_but_functions and self._is_operation_allowed('C'):
                 try:
                     tool_name = self._make_tool_name(f"create_{es_name}")
                     # Include ALL properties for create (including keys that may need to be specified)
@@ -773,7 +801,7 @@ class ODataMCPBridge:
                     if registered_name: self.registered_entity_tools[es_name].append(registered_name)
                 except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
 
-            if entity_set.updatable and key_props and not self.read_only and not self.read_only_but_functions:  # Need keys to update
+            if entity_set.updatable and key_props and not self.read_only and not self.read_only_but_functions and self._is_operation_allowed('U'):  # Need keys to update
                 try:
                     tool_name = self._make_tool_name(f"update_{es_name}")
                     # Params are keys (required) + non-keys (optional)
@@ -793,7 +821,7 @@ class ODataMCPBridge:
                     if registered_name: self.registered_entity_tools[es_name].append(registered_name)
                 except Exception as e: print(f"ERROR registering {tool_name}: {e}", file=sys.stderr)
 
-            if entity_set.deletable and key_props and not self.read_only and not self.read_only_but_functions:  # Need keys to delete
+            if entity_set.deletable and key_props and not self.read_only and not self.read_only_but_functions and self._is_operation_allowed('D'):  # Need keys to delete
                 try:
                     tool_name = self._make_tool_name(f"delete_{es_name}")
                     params = self._get_param_defs_for_keys(key_props)
@@ -812,7 +840,7 @@ class ODataMCPBridge:
 
         # --- Function Import Tools ---
         # Skip function tools if in full read-only mode
-        if not self.read_only:
+        if not self.read_only and self._is_operation_allowed('A'):
             for func_name, func_import in self.metadata.function_imports.items():
                 # Check if this function matches any filter pattern (if specified)
                 if self.allowed_functions and not self._matches_function_filter(func_name, self.allowed_functions):
@@ -841,7 +869,10 @@ class ODataMCPBridge:
                     if registered_name: self.registered_function_tools.append(registered_name)
                 except Exception as e: print(f"ERROR registering function {func_name}: {e}", file=sys.stderr)
         elif self.verbose:
-            self._log_verbose("Skipping all function imports due to --read-only mode")
+            if not self.read_only:
+                self._log_verbose("Skipping all function imports - operation type 'A' is not allowed")
+            else:
+                self._log_verbose("Skipping all function imports due to --read-only mode")
 
         # --- Log Summary (only if verbose) ---
         if self.verbose:

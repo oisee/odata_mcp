@@ -100,6 +100,8 @@ ODATA_COOKIE_STRING="session=abc123; token=xyz789"
 | `--trace-mcp` | Enable detailed MCP protocol trace logging | False |
 | `--read-only, -ro` | Hide all modifying operations (create, update, delete, functions) | False |
 | `--read-only-but-functions, -robf` | Hide create, update, delete but allow functions | False |
+| `--enable` | Enable only specific operation types (see Operation Type Filtering) | - |
+| `--disable` | Disable specific operation types (see Operation Type Filtering) | - |
 | `--hints-file` | Path to hints JSON file | hints.json |
 | `--hint` | Direct hint JSON or text to inject | - |
 | `--info-tool-name` | Custom name for the service info tool | odata_service_info |
@@ -142,6 +144,43 @@ These modes are mutually exclusive and useful when:
 - Exploring unfamiliar OData services
 - Preventing accidental data modifications
 - Creating read-only MCP endpoints for users
+
+### Operation Type Filtering
+
+The wrapper supports fine-grained control over which operation types are generated using `--enable` and `--disable` flags. This helps reduce tool count for services with many entities.
+
+#### Operation Types
+
+- **C**: Create operations
+- **S**: Search operations
+- **F**: Filter operations (includes count)
+- **G**: Get (retrieve single entity) operations
+- **U**: Update operations
+- **D**: Delete operations
+- **A**: Actions/Function imports
+- **R**: Read operations (expands to S, F, and G)
+
+#### Examples
+
+```bash
+# Enable only read operations (search, filter, get)
+python odata_mcp.py --service https://example.com/odata/ --enable "R"
+
+# Enable only filter and get operations
+python odata_mcp.py --service https://example.com/odata/ --enable "FG"
+
+# Disable create, update, and delete operations
+python odata_mcp.py --service https://example.com/odata/ --disable "CUD"
+
+# Disable actions/function imports
+python odata_mcp.py --service https://example.com/odata/ --disable "A"
+```
+
+**Notes:**
+- Operation codes are case-insensitive
+- `--enable` and `--disable` are mutually exclusive
+- The special `R` code in `--enable` expands to S, F, and G operations
+- This filtering is more flexible than `--read-only` modes as it allows specific operation combinations
 
 ### Service-Specific Hints
 

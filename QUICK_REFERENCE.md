@@ -62,6 +62,22 @@ python odata_mcp.py --entities "Product*,Order*" https://service.com/odata/
 python odata_mcp.py --functions "Get*,Create*" https://service.com/odata/
 ```
 
+### Operation Type Filtering
+```bash
+# Enable only read operations (search, filter, get)
+python odata_mcp.py --enable "R" https://service.com/odata/
+
+# Enable specific operations
+python odata_mcp.py --enable "FG" https://service.com/odata/  # Only filter and get
+
+# Disable specific operations
+python odata_mcp.py --disable "CUD" https://service.com/odata/  # No create, update, delete
+python odata_mcp.py --disable "A" https://service.com/odata/    # No actions/functions
+
+# Case-insensitive
+python odata_mcp.py --enable "sfg" https://service.com/odata/  # Same as SFG
+```
+
 ### Debugging
 ```bash
 # Verbose output

@@ -38,7 +38,7 @@ The OData MCP Wrapper enables seamless integration between OData v2 services and
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/odata_mcp.git
+   git clone https://github.com/jlowin/odata_mcp.git
    cd odata_mcp
    ```
 

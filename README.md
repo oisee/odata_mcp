@@ -32,13 +32,13 @@ The OData MCP Wrapper enables seamless integration between OData v2 services and
 ### Prerequisites
 
 - Python 3.8+
-- [FastMCP](https://github.com/yourusername/fastmcp) package
+- [FastMCP](https://github.com/jlowin/fastmcp) package
 
 ### Installation Steps
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/jlowin/odata_mcp.git
+   git clone https://github.com/oisee/odata_mcp.git
    cd odata_mcp
    ```
 

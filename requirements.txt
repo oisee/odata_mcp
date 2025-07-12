@@ -2,27 +2,27 @@
 # External dependencies for the OData to MCP Bridge
 
 # HTTP requests library
-requests
+requests==2.32.3
 
 # XML parsing library
-lxml
+lxml==5.3.0
 
 # Data validation and settings management
-pydantic
+pydantic==2.10.6
 
 # Environment variable management
-python-dotenv
+python-dotenv==1.1.0
 
 # Message Choreography Processor (MCP) library
-mcp
+mcp==1.9.2
 
 # FastMCP for simplified MCP server creation
-fastmcp
+fastmcp==2.5.2
 
 # Optional: Secure XML parsing (recommended for production)
 # defusedxml
 
 # HTTP/SSE transport dependencies
-aiohttp>=3.8.0
+aiohttp==3.8.5
 aiohttp-sse>=2.1.0
 aiohttp-cors>=0.7.0

@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 try:
     from fastmcp import FastMCP
+    from fastmcp.tools import Tool
     import mcp.types as types
 except ImportError:
     print("ERROR: Could not import FastMCP. Make sure it's installed and accessible.", file=sys.stderr)
@@ -1013,7 +1014,7 @@ class ODataMCPBridge:
             else:
                 tool_name = self._make_tool_name("odata_service_info")
             
-            self.mcp.add_tool(odata_service_info, name=tool_name)
+            self.mcp.add_tool(Tool.from_function(odata_service_info), name=tool_name)
             # Track the tool for trace functionality
             self.all_registered_tools[tool_name] = odata_service_info
             self._log_verbose(f"Registered tool: {tool_name}")
@@ -1021,7 +1022,7 @@ class ODataMCPBridge:
             # Also register with 'readme' alias if not using custom name
             if not self.info_tool_name:
                 readme_name = self._make_tool_name("readme")
-                self.mcp.add_tool(odata_service_info, name=readme_name)
+                self.mcp.add_tool(Tool.from_function(odata_service_info), name=readme_name)
                 self.all_registered_tools[readme_name] = odata_service_info
                 self._log_verbose(f"Registered tool alias: {readme_name}")
         except Exception as e:

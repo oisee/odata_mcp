@@ -16,6 +16,17 @@ from .models import EntityType, ODataMetadata
 from .guid_handler import ODataGUIDHandler
 
 
+def encode_query_params(params):
+    """Encode query parameters properly for OData compatibility.
+    
+    OData servers (especially SAP CAP backends) don't accept '+' for spaces 
+    in URL parameters. They require '%20' according to RFC 3986.
+    """
+    encoded = urlencode(params, doseq=True, safe='$')
+    # Replace '+' with '%20' for OData compatibility
+    return encoded.replace('+', '%20')
+
+
 class ODataClient:
     """Client for interacting with an OData v2 service."""
 
@@ -313,6 +324,17 @@ class ODataClient:
             self._log_verbose(f"Adding CSRF token to request: {self.csrf_token[:20]}...")
 
         kwargs['headers'] = request_headers
+
+        # Handle OData-compatible URL encoding for query parameters
+        if 'params' in kwargs and kwargs['params']:
+            # Convert params dict to properly encoded query string
+            encoded_params = encode_query_params(kwargs['params'])
+            # Remove params from kwargs and append to URL
+            del kwargs['params']
+            if '?' in url:
+                url = f"{url}&{encoded_params}"
+            else:
+                url = f"{url}?{encoded_params}"
 
         # Make the request
         try:
@@ -1172,7 +1194,7 @@ class ODataClient:
                 # Merge with existing query params (like $format)
                 current_query.update({k: v[0] for k, v in query.items()})  # Flatten format param
 
-                url_parts[4] = urlencode(current_query, doseq=True)
+                url_parts[4] = encode_query_params(current_query)
                 final_url = urlunparse(url_parts)
                 self._log_verbose(f"Requesting: GET {final_url}")
                 response = await asyncio.to_thread(
@@ -1181,7 +1203,7 @@ class ODataClient:
 
             elif http_method == 'POST':
                 # For POST, format param is in query, data is in body
-                url_parts[4] = urlencode(query, doseq=True)
+                url_parts[4] = encode_query_params(query)
                 final_url = urlunparse(url_parts)
                 self._log_verbose(f"Requesting: POST {final_url} with data {odata_params}")
                 response = await asyncio.to_thread(

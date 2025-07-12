@@ -55,6 +55,32 @@ def load_cookies_from_file(cookie_file: str) -> Optional[Dict[str, str]]:
     return cookies
 
 
+def is_localhost_addr(addr: str) -> bool:
+    """Check if address is localhost-only."""
+    if addr.startswith(":") and not addr.startswith("::"):
+        return False  # ":8080" binds to all interfaces, but "::1" is valid IPv6
+    
+    host = addr  # Default to the full address
+    
+    # Handle IPv6 addresses with brackets first
+    if addr.startswith("[") and "]:" in addr:
+        # [::1]:8080 format
+        host = addr.split("]:", 1)[0][1:]  # Remove [ from start
+    elif addr.count(":") == 1:
+        # Simple host:port format (IPv4 or hostname)
+        host = addr.split(":", 1)[0]
+    elif addr.count(":") > 1 and not addr.startswith("["):
+        # Likely bare IPv6 address like ::1:8080
+        # Split and check if last part looks like a port number
+        parts = addr.rsplit(":", 1)  # Split only on the last colon
+        if len(parts) == 2 and parts[1].isdigit():
+            # Last part is likely port number
+            host = parts[0]
+        # If not, host remains the full address
+    
+    return host in ("localhost", "127.0.0.1", "::1", "")
+
+
 def parse_cookie_string(cookie_string: str) -> Dict[str, str]:
     """Parse cookie string like 'key1=val1; key2=val2'."""
     cookies = {}
@@ -325,7 +351,8 @@ def main():
     
     # Transport options
     parser.add_argument("--transport", choices=["stdio", "http", "sse"], default="stdio", help="Transport type: 'stdio' (default) or 'http' (SSE)")
-    parser.add_argument("--http-addr", default=":8080", help="HTTP server address (used with --transport http)")
+    parser.add_argument("--http-addr", default="localhost:8080", help="HTTP server address (used with --transport http)")
+    parser.add_argument("--i-am-security-expert-i-know-what-i-am-doing", action="store_true", help="Allow HTTP transport to bind to non-localhost addresses (SECURITY RISK)")
 
     args = parser.parse_args()
 
@@ -480,6 +507,19 @@ def main():
         # Set up transport based on flag
         transport = None
         if args.transport in ["http", "sse"]:
+            # Security check for HTTP transport
+            expert_mode = getattr(args, 'i_am_security_expert_i_know_what_i_am_doing', False)
+            if not expert_mode and not is_localhost_addr(args.http_addr):
+                print("\n⚠️  SECURITY WARNING ⚠️", file=sys.stderr)
+                print("HTTP/SSE transport is UNPROTECTED - no authentication!", file=sys.stderr)
+                print(f"Current address '{args.http_addr}' is not localhost.", file=sys.stderr)
+                print("\nTo bind to localhost, use:", file=sys.stderr)
+                print("  --http-addr localhost:8080", file=sys.stderr)
+                print("  --http-addr 127.0.0.1:8080", file=sys.stderr)
+                print("\nIf you REALLY need network exposure, use:", file=sys.stderr)
+                print("  --i-am-security-expert-i-know-what-i-am-doing", file=sys.stderr)
+                sys.exit(1)
+            
             # Parse host and port from http_addr
             addr_parts = args.http_addr.split(":")
             if len(addr_parts) == 2 and addr_parts[0]:  # host:port

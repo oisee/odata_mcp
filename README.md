@@ -562,6 +562,16 @@ from odata_mcp_compat import MetadataParser, ODataClient, ODataMCPBridge
 - Use `$filter` to reduce result sets
 - Consider excluding binary fields for large datasets
 
+## Community & Discussions
+
+Join our community discussions to:
+- Ask questions about OData MCP integration
+- Share ideas and feature requests
+- Get help with service-specific configurations
+- Connect with other developers using the wrapper
+
+🗣️ **[Join the Discussion](https://github.com/oisee/odata_mcp/discussions)** - Welcome to the community!
+
 ## Additional Documentation
 
 - [Architecture Guide](ARCHITECTURE.md) - System design and module structure

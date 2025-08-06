@@ -350,8 +350,8 @@ def main():
     parser.add_argument("--disable", help="Disable specific operation types: C (create), S (search), F (filter), G (get), U (update), D (delete), A (actions/function imports). Case-insensitive. Example: --disable 'CUD'")
     
     # Transport options
-    parser.add_argument("--transport", choices=["stdio", "http", "sse"], default="stdio", help="Transport type: 'stdio' (default) or 'http' (SSE)")
-    parser.add_argument("--http-addr", default="localhost:8080", help="HTTP server address (used with --transport http)")
+    parser.add_argument("--transport", choices=["stdio", "http", "sse", "streamable-http"], default="stdio", help="Transport type: 'stdio' (default), 'http' (SSE), or 'streamable-http' (for Microsoft Copilot Studio)")
+    parser.add_argument("--http-addr", default="localhost:8080", help="HTTP server address (used with --transport http, sse, or streamable-http)")
     parser.add_argument("--i-am-security-expert-i-know-what-i-am-doing", action="store_true", help="Allow HTTP transport to bind to non-localhost addresses (SECURITY RISK)")
 
     args = parser.parse_args()
@@ -506,7 +506,42 @@ def main():
         
         # Set up transport based on flag
         transport = None
-        if args.transport in ["http", "sse"]:
+        fastmcp_transport = None  # Transport string to pass to FastMCP
+        
+        if args.transport == "streamable-http":
+            # For streamable-http, we let FastMCP handle it directly
+            # Security check for HTTP transport
+            expert_mode = getattr(args, 'i_am_security_expert_i_know_what_i_am_doing', False)
+            if not expert_mode and not is_localhost_addr(args.http_addr):
+                print("\n⚠️  SECURITY WARNING ⚠️", file=sys.stderr)
+                print("Streamable HTTP transport is UNPROTECTED - no authentication!", file=sys.stderr)
+                print(f"Current address '{args.http_addr}' is not localhost.", file=sys.stderr)
+                print("\nTo bind to localhost, use:", file=sys.stderr)
+                print("  --http-addr localhost:8080", file=sys.stderr)
+                print("  --http-addr 127.0.0.1:8080", file=sys.stderr)
+                print("\nIf you REALLY need network exposure, use:", file=sys.stderr)
+                print("  --i-am-security-expert-i-know-what-i-am-doing", file=sys.stderr)
+                sys.exit(1)
+            
+            # Parse host and port from http_addr
+            addr_parts = args.http_addr.split(":")
+            if len(addr_parts) == 2 and addr_parts[0]:  # host:port
+                host = addr_parts[0]
+                port = int(addr_parts[1])
+            elif len(addr_parts) == 2:  # :port
+                host = "0.0.0.0"
+                port = int(addr_parts[1])
+            else:  # just port or invalid
+                host = "0.0.0.0"
+                try:
+                    port = int(args.http_addr)
+                except ValueError:
+                    port = 8080
+            
+            if args.verbose:
+                print(f"[VERBOSE] Using Streamable HTTP transport on {host}:{port}", file=sys.stderr)
+            fastmcp_transport = "streamable-http"
+        elif args.transport in ["http", "sse"]:
             # Security check for HTTP transport
             expert_mode = getattr(args, 'i_am_security_expert_i_know_what_i_am_doing', False)
             if not expert_mode and not is_localhost_addr(args.http_addr):
@@ -541,6 +576,13 @@ def main():
         elif args.verbose:
             print("[VERBOSE] Using stdio transport", file=sys.stderr)
         
+        # Prepare transport configuration for bridge
+        transport_config = {
+            'host': host if args.transport in ["streamable-http", "http", "sse"] else None,
+            'port': port if args.transport in ["streamable-http", "http", "sse"] else None,
+            'fastmcp_transport': fastmcp_transport
+        } if args.transport == "streamable-http" else None
+        
         bridge = ODataMCPBridge(
             service_url, 
             auth, 
@@ -564,6 +606,7 @@ def main():
             hints_file=args.hints_file,
             hint=args.hint,
             transport=transport,
+            transport_config=transport_config,
             info_tool_name=args.info_tool_name,
             enabled_operations=enabled_operations,
             disabled_operations=disabled_operations

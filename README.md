@@ -373,7 +373,7 @@ await odata_service_info()
 
 ## Transport Options
 
-The OData MCP bridge supports two transport mechanisms:
+The OData MCP bridge supports three transport mechanisms:
 
 ### 1. STDIO Transport (Default)
 - Standard input/output communication
@@ -387,6 +387,28 @@ The OData MCP bridge supports two transport mechanisms:
   - `GET /health` - Health check
   - `GET /sse` - Server-Sent Events stream
   - `POST /rpc` - JSON-RPC endpoint
+
+### 3. Streamable HTTP Transport (New)
+- Modern bidirectional HTTP transport for MCP
+- Required for Microsoft Copilot Studio integration
+- Replaces SSE transport (which will be deprecated in August 2025)
+- Single endpoint at `/mcp` for all communication
+- More efficient and secure than SSE
+
+#### Using Streamable HTTP Transport
+
+```bash
+# Start with default port 8080 (recommended for Microsoft Copilot Studio)
+python odata_mcp.py --transport streamable-http --service https://your-service.com/odata/
+
+# Use custom port
+python odata_mcp.py --transport streamable-http --http-addr localhost:3000 --service https://your-service.com/odata/
+
+# With authentication
+python odata_mcp.py --transport streamable-http -u username -p password --service https://your-service.com/odata/
+```
+
+The Streamable HTTP server will be available at `http://localhost:8080/mcp` (or your custom port).
 
 #### Using HTTP/SSE Transport
 

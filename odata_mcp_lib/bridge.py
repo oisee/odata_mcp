@@ -43,7 +43,7 @@ class ODataMCPBridge:
                  response_metadata: bool = False, max_response_size: int = 5 * 1024 * 1024, max_items: int = 100,
                  read_only: bool = False, read_only_but_functions: bool = False,
                  trace_mcp: bool = False, hints_file: Optional[str] = None, hint: Optional[str] = None,
-                 transport: Optional[Transport] = None, info_tool_name: Optional[str] = None,
+                 transport: Optional[Transport] = None, transport_config: Optional[Dict] = None, info_tool_name: Optional[str] = None,
                  enabled_operations: Optional[set] = None, disabled_operations: Optional[set] = None):
         self.service_url = service_url
         self.auth = auth
@@ -62,6 +62,7 @@ class ODataMCPBridge:
         self.read_only_but_functions = read_only_but_functions
         self.trace_mcp = trace_mcp
         self.transport = transport
+        self.transport_config = transport_config
         self.trace_file = None
         self.info_tool_name = info_tool_name
         self.enabled_operations = enabled_operations
@@ -495,7 +496,10 @@ class ODataMCPBridge:
             tool_func = exec_scope[tool_name]
 
             # Register the dynamically created function
-            self.mcp.add_tool(tool_func, name=tool_name)
+            # Create a Tool from the function and set its name
+            tool = Tool.from_function(tool_func)
+            tool.name = tool_name
+            self.mcp.add_tool(tool)
             # Track the tool for trace functionality
             self.all_registered_tools[tool_name] = tool_func
             self._log_verbose(f"Registered tool: {tool_name}")
@@ -1014,7 +1018,10 @@ class ODataMCPBridge:
             else:
                 tool_name = self._make_tool_name("odata_service_info")
             
-            self.mcp.add_tool(Tool.from_function(odata_service_info), name=tool_name)
+            # Create tool with custom name
+            tool = Tool.from_function(odata_service_info)
+            tool.name = tool_name
+            self.mcp.add_tool(tool)
             # Track the tool for trace functionality
             self.all_registered_tools[tool_name] = odata_service_info
             self._log_verbose(f"Registered tool: {tool_name}")
@@ -1022,7 +1029,10 @@ class ODataMCPBridge:
             # Also register with 'readme' alias if not using custom name
             if not self.info_tool_name:
                 readme_name = self._make_tool_name("readme")
-                self.mcp.add_tool(Tool.from_function(odata_service_info), name=readme_name)
+                # Create readme alias with custom name
+                readme_tool = Tool.from_function(odata_service_info)
+                readme_tool.name = readme_name
+                self.mcp.add_tool(readme_tool)
                 self.all_registered_tools[readme_name] = odata_service_info
                 self._log_verbose(f"Registered tool alias: {readme_name}")
         except Exception as e:
@@ -1051,12 +1061,18 @@ class ODataMCPBridge:
 
             # If transport is provided, use it; otherwise use FastMCP's default
             if self.transport:
-                # Set up message handler
+                # Set up message handler for custom HTTP/SSE transport
                 self.transport.handler = self._handle_transport_message
                 # Run transport asynchronously
                 asyncio.run(self._run_with_transport())
+            elif self.transport_config and self.transport_config.get('fastmcp_transport') == 'streamable-http':
+                # Use FastMCP's built-in streamable-http transport
+                host = self.transport_config.get('host', '127.0.0.1')
+                port = self.transport_config.get('port', 8000)
+                self._log_verbose(f"Starting FastMCP with Streamable HTTP transport on {host}:{port}")
+                self.mcp.run(transport="streamable-http", host=host, port=port, path="/mcp")
             else:
-                # The FastMCP server run method handles the main loop
+                # The FastMCP server run method handles the main loop with default transport (stdio)
                 self.mcp.run()
         finally:
             self._cleanup()

@@ -14,10 +14,11 @@ pydantic==2.10.6
 python-dotenv==1.1.0
 
 # Message Choreography Processor (MCP) library
-mcp==1.9.2
+mcp==1.12.3
 
-# FastMCP for simplified MCP server creation
-fastmcp==2.5.2
+# FastMCP for simplified MCP server creation (with Streamable HTTP support)
+# Version 2.11.1+ required for Streamable HTTP transport (Microsoft Copilot Studio)
+fastmcp==2.11.1
 
 # Optional: Secure XML parsing (recommended for production)
 # defusedxml

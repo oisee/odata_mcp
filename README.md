@@ -15,7 +15,7 @@ The OData MCP Wrapper enables seamless integration between OData v2 services and
 - **Full CRUD Support**: Create, Read, Update, Delete operations for entity sets
 - **Query Capabilities**: Standard OData query parameters (filter, select, expand, orderby, etc.)
 - **Function Import Support**: Handles OData function imports
-- **Authentication**: Basic auth and cookie-based auth with CSRF token management
+- **Authentication**: Basic auth, cookie-based auth, and OAuth 2.0 with CSRF token management
 - **GUID Optimization**: Automatic base64 ↔ standard GUID conversion
 - **Response Optimization**: Size limiting and selective field retrieval
 - **Legacy Date Support**: Automatic conversion between SAP /Date(milliseconds)/ and ISO 8601
@@ -67,6 +67,12 @@ ODATA_PASS=your_password  # Alternative
 # Cookie Authentication (alternative to basic auth)
 ODATA_COOKIE_FILE=/path/to/cookie.txt
 ODATA_COOKIE_STRING="session=abc123; token=xyz789"
+
+# OAuth 2.0 Authentication (alternative to basic/cookie auth)
+OAUTH_CLIENT_ID=your-oauth-client-id
+OAUTH_CLIENT_SECRET=your-oauth-client-secret  
+OAUTH_TOKEN_URL=https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token
+OAUTH_SCOPE=https://graph.microsoft.com/.default  # Optional
 ```
 
 ## Usage
@@ -80,6 +86,11 @@ ODATA_COOKIE_STRING="session=abc123; token=xyz789"
 | `-p, --password` | Password for basic authentication | - |
 | `--cookie-file` | Path to cookie file (Netscape format) | - |
 | `--cookie-string` | Cookie string (key1=val1; key2=val2) | - |
+| `--oauth-client-id` | OAuth 2.0 Client ID | - |
+| `--oauth-client-secret` | OAuth 2.0 Client Secret | - |
+| `--oauth-token-url` | OAuth 2.0 Token Endpoint URL | - |
+| `--oauth-scope` | OAuth 2.0 Scope | - |
+| `--oauth-tenant` | Azure AD Tenant ID for Microsoft Graph | common |
 | `-v, --verbose, --debug` | Enable verbose output to stderr | False |
 | `--tool-prefix` | Custom prefix for tool names | - |
 | `--tool-postfix` | Custom postfix for tool names | `_for_<service_id>` |
@@ -251,6 +262,129 @@ Use `--trace-mcp` to enable detailed protocol debugging. This creates a log file
 
 Useful for diagnosing client compatibility issues.
 
+## OAuth 2.0 Authentication
+
+The OData MCP wrapper supports OAuth 2.0 authentication for modern, secure access to protected OData services.
+
+### Supported OAuth Flows
+
+- **Client Credentials Flow**: Server-to-server authentication (recommended)
+- **Automatic Token Refresh**: Tokens are automatically refreshed when expired
+- **Multiple Providers**: Microsoft Graph, SAP, and custom OAuth providers
+
+### Configuration
+
+#### Environment Variables
+```bash
+# OAuth 2.0 credentials
+OAUTH_CLIENT_ID=your-application-client-id
+OAUTH_CLIENT_SECRET=your-application-client-secret
+OAUTH_TOKEN_URL=https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token
+OAUTH_SCOPE=https://graph.microsoft.com/.default  # Optional
+```
+
+#### Command Line Arguments
+```bash
+python odata_mcp.py --oauth-client-id CLIENT_ID \
+                    --oauth-client-secret CLIENT_SECRET \
+                    --oauth-token-url TOKEN_URL \
+                    --oauth-scope SCOPE \
+                    --service SERVICE_URL
+```
+
+### Microsoft Graph Integration
+
+The wrapper includes built-in support for Microsoft Graph API:
+
+```bash
+# Automatic Graph configuration (detects graph.microsoft.com)
+python odata_mcp.py --service https://graph.microsoft.com/v1.0/ \
+                    --oauth-client-id YOUR_CLIENT_ID \
+                    --oauth-client-secret YOUR_CLIENT_SECRET \
+                    --oauth-tenant YOUR_TENANT_ID
+
+# Or use environment variables
+export OAUTH_CLIENT_ID="your-client-id"
+export OAUTH_CLIENT_SECRET="your-client-secret"  
+python odata_mcp.py --service https://graph.microsoft.com/v1.0/ \
+                    --oauth-tenant YOUR_TENANT_ID
+```
+
+### Setting Up OAuth with Microsoft Graph
+
+1. **Register Application** in Azure Portal:
+   - Go to [Azure Portal](https://portal.azure.com) → Azure Active Directory → App registrations
+   - Click "New registration"
+   - Set application name and supported account types
+   - No redirect URI needed for client credentials flow
+
+2. **Configure API Permissions**:
+   - Go to "API permissions" → Add permission → Microsoft Graph → Application permissions
+   - Add required permissions (e.g., `User.Read.All`, `Group.Read.All`)
+   - Grant admin consent for permissions
+
+3. **Get Credentials**:
+   - **Client ID**: Found in app overview page
+   - **Client Secret**: Create in "Certificates & secrets" → New client secret
+   - **Tenant ID**: Found in app overview or Azure AD overview
+
+4. **Test Connection**:
+   ```bash
+   python test_oauth.py  # Use the provided test script
+   ```
+
+### SAP OAuth Configuration
+
+For SAP systems with OIDC enabled:
+
+```bash
+python odata_mcp.py --service https://your-sap-system.com:8443/sap/opu/odata/sap/YOUR_SERVICE/ \
+                    --oauth-client-id YOUR_SAP_CLIENT_ID \
+                    --oauth-client-secret YOUR_SAP_CLIENT_SECRET \
+                    --oauth-token-url https://your-sap-system.com:8443/sap/bc/sec/oauth2/token \
+                    --oauth-scope "odata_read odata_write"
+```
+
+### Testing OAuth Setup
+
+Use the provided test script to verify OAuth configuration:
+
+```bash
+# Test with your credentials
+export OAUTH_CLIENT_ID="your-client-id"
+export OAUTH_CLIENT_SECRET="your-client-secret"
+python test_oauth.py
+
+# Skip Graph API tests if you don't have Graph permissions
+python test_oauth.py --skip-graph
+```
+
+### Troubleshooting OAuth
+
+**Common Issues:**
+
+1. **Token acquisition failed**: 
+   - Verify client ID and secret are correct
+   - Check token URL is accessible
+   - Ensure proper scope configuration
+
+2. **Insufficient permissions**:
+   - Verify API permissions in Azure Portal
+   - Ensure admin consent is granted
+   - Check scope matches required permissions
+
+3. **Token expired errors**:
+   - Tokens are automatically refreshed, but check network connectivity
+   - Verify token URL and refresh token support
+
+**Debug Mode:**
+```bash
+python odata_mcp.py --oauth-client-id CLIENT_ID \
+                    --oauth-client-secret CLIENT_SECRET \
+                    --service SERVICE_URL \
+                    --verbose  # Shows OAuth token acquisition logs
+```
+
 ### Command Line Examples
 
 ```bash
@@ -266,6 +400,20 @@ python odata_mcp.py --service https://your-service.com/odata/ \
 # Using cookie authentication
 python odata_mcp.py --service https://your-service.com/odata/ \
                     --cookie-file cookie.txt \
+                    --verbose
+
+# Using OAuth 2.0 authentication
+python odata_mcp.py --service https://your-service.com/odata/ \
+                    --oauth-client-id YOUR_CLIENT_ID \
+                    --oauth-client-secret YOUR_CLIENT_SECRET \
+                    --oauth-token-url https://login.microsoftonline.com/tenant/oauth2/v2.0/token \
+                    --verbose
+
+# Microsoft Graph with OAuth (simplified)
+python odata_mcp.py --service https://graph.microsoft.com/v1.0/ \
+                    --oauth-client-id YOUR_CLIENT_ID \
+                    --oauth-client-secret YOUR_CLIENT_SECRET \
+                    --oauth-tenant YOUR_TENANT_ID \
                     --verbose
 
 # Additional options
@@ -518,7 +666,7 @@ from odata_mcp_compat import MetadataParser, ODataClient, ODataMCPBridge
 - [ ] OData v4 support
 - [ ] Enhanced batch operations
 - [x] Cookie-based authentication (completed)
-- [ ] OAuth 2.0 authentication
+- [x] OAuth 2.0 authentication (completed)
 - [ ] Response caching for performance
 - [ ] Input validation improvements
 
@@ -554,6 +702,7 @@ from odata_mcp_compat import MetadataParser, ODataClient, ODataMCPBridge
 - [x] **Read-Only Modes**: Options to hide modifying operations (--read-only, --read-only-but-functions)
 - [x] **Service Hints**: Implementation guidance for known problematic services
 - [x] **MCP Trace Logging**: Protocol debugging support with --trace-mcp
+- [x] **OAuth 2.0 Authentication**: Modern secure authentication with automatic token refresh
 
 ## Troubleshooting
 

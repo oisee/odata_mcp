@@ -15,15 +15,20 @@ from .models import EntityProperty, EntityType, EntitySet, FunctionImport, OData
 class MetadataParser:
     """Parses OData v2 metadata from an OData service."""
 
-    def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, verbose: bool = False):
+    def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, 
+                 oauth_manager: Optional[object] = None, verbose: bool = False):
         self.service_url = service_url.rstrip('/')
         self.metadata_url = f"{self.service_url}/$metadata"
         self.auth = auth
+        self.oauth_manager = oauth_manager
         self.verbose = verbose
         self.session = requests.Session()
         
         # Handle different auth types
-        if auth:
+        if oauth_manager:
+            # OAuth authentication
+            self.auth_type = "oauth"
+        elif auth:
             if isinstance(auth, tuple) and len(auth) == 2:
                 # Basic auth
                 self.session.auth = auth
@@ -76,7 +81,14 @@ class MetadataParser:
 
         try:
             self._log_verbose(f"Fetching metadata from {self.metadata_url}...")
-            response = self.session.get(self.metadata_url)
+            
+            # Prepare headers for OAuth if needed
+            headers = {}
+            if self.auth_type == "oauth" and self.oauth_manager:
+                oauth_headers = self.oauth_manager.get_authorization_header()
+                headers.update(oauth_headers)
+            
+            response = self.session.get(self.metadata_url, headers=headers)
             response.raise_for_status()
             self._log_verbose("Metadata fetched successfully.")
 
@@ -181,6 +193,12 @@ class MetadataParser:
             self._log_verbose(f"Fetching service document from {self.service_url}...")
             # Prefer AtomPub format for service document
             headers = {'Accept': 'application/atom+xml, application/xml'}
+            
+            # Add OAuth headers if needed
+            if self.auth_type == "oauth" and self.oauth_manager:
+                oauth_headers = self.oauth_manager.get_authorization_header()
+                headers.update(oauth_headers)
+                
             response = self.session.get(self.service_url, headers=headers)
             response.raise_for_status()
 

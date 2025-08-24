@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 from odata_mcp_lib import ODataMCPBridge
 from odata_mcp_lib.transport.stdio import StdioTransport
 from odata_mcp_lib.transport.http_sse import HttpSSETransport
+from odata_mcp_lib.oauth_handler import OAuthTokenManager, OAuthConfig
 
 # Load environment variables from .env file
 load_dotenv()
@@ -154,7 +155,9 @@ def print_trace_info(bridge):
         print("⚙️ Function Filter: None (all functions)")
     
     # Authentication Info
-    if bridge.auth:
+    if bridge.oauth_manager:
+        print(f"🔐 Authentication: OAuth 2.0 (client: {bridge.oauth_manager.client_id})")
+    elif bridge.auth:
         if isinstance(bridge.auth, tuple):
             print(f"🔐 Authentication: Basic (user: {bridge.auth[0]})")
         elif isinstance(bridge.auth, dict):
@@ -311,6 +314,13 @@ def main():
     auth_group.add_argument("--cookie-file", help="Path to cookie file in Netscape format")
     auth_group.add_argument("--cookie-string", help="Cookie string (key1=val1; key2=val2)")
     
+    # OAuth authentication options
+    auth_group.add_argument("--oauth-client-id", help="OAuth 2.0 Client ID (overrides OAUTH_CLIENT_ID env var)")
+    auth_group.add_argument("--oauth-client-secret", help="OAuth 2.0 Client Secret (overrides OAUTH_CLIENT_SECRET env var)")
+    auth_group.add_argument("--oauth-token-url", help="OAuth 2.0 Token Endpoint URL (overrides OAUTH_TOKEN_URL env var)")
+    auth_group.add_argument("--oauth-scope", help="OAuth 2.0 Scope (overrides OAUTH_SCOPE env var)")
+    auth_group.add_argument("--oauth-tenant", help="Azure AD Tenant ID for Microsoft Graph (defaults to 'common')")
+    
     parser.add_argument("-p", "--password", help="Password for basic authentication (overrides ODATA_PASSWORD env var)")
     # Allow --debug as alias for --verbose
     parser.add_argument("-v", "--verbose", "--debug", dest="verbose", action="store_true", help="Enable verbose output to stderr")
@@ -378,9 +388,41 @@ def main():
         if service_url and args.verbose: print("[VERBOSE] Using ODATA_URL from environment.", file=sys.stderr)
 
     # --- Authentication Handling ---
-    # Priority: Cookie auth > Basic auth
+    # Priority: OAuth > Cookie auth > Basic auth
+    auth = None
+    oauth_manager = None
     
-    if args.cookie_file:
+    # Check for OAuth configuration first
+    oauth_client_id = args.oauth_client_id or os.getenv("OAUTH_CLIENT_ID") or os.getenv("ODATA_OAUTH_CLIENT_ID")
+    oauth_client_secret = args.oauth_client_secret or os.getenv("OAUTH_CLIENT_SECRET") or os.getenv("ODATA_OAUTH_CLIENT_SECRET") 
+    oauth_token_url = args.oauth_token_url or os.getenv("OAUTH_TOKEN_URL") or os.getenv("ODATA_OAUTH_TOKEN_URL")
+    oauth_scope = args.oauth_scope or os.getenv("OAUTH_SCOPE") or os.getenv("ODATA_OAUTH_SCOPE")
+    
+    # Handle special case for Microsoft Graph
+    if args.oauth_tenant or ('graph.microsoft.com' in service_url if service_url else False):
+        tenant_id = args.oauth_tenant or 'common'
+        graph_config = OAuthConfig.microsoft_graph(tenant_id)
+        if not oauth_token_url and oauth_client_id:
+            oauth_token_url = graph_config['token_url']
+        if not oauth_scope and oauth_client_id:
+            oauth_scope = graph_config['scope']
+    
+    if oauth_client_id and oauth_client_secret and oauth_token_url:
+        # OAuth 2.0 authentication
+        oauth_manager = OAuthTokenManager(
+            client_id=oauth_client_id,
+            client_secret=oauth_client_secret,
+            token_url=oauth_token_url,
+            scope=oauth_scope,
+            verbose=args.verbose
+        )
+        
+        if args.verbose:
+            print(f"[VERBOSE] Using OAuth 2.0 authentication with token URL: {oauth_token_url}", file=sys.stderr)
+            if oauth_scope:
+                print(f"[VERBOSE] OAuth scope: {oauth_scope}", file=sys.stderr)
+    
+    elif args.cookie_file:
         # Cookie file authentication
         if not Path(args.cookie_file).exists():
             print(f"ERROR: Cookie file not found: {args.cookie_file}", file=sys.stderr)
@@ -585,7 +627,8 @@ def main():
         
         bridge = ODataMCPBridge(
             service_url, 
-            auth, 
+            auth,
+            oauth_manager=oauth_manager,
             verbose=args.verbose,
             tool_prefix=args.tool_prefix,
             tool_postfix=args.tool_postfix,

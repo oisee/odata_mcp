@@ -36,7 +36,8 @@ from .hint_manager import HintManager
 class ODataMCPBridge:
     """Bridge between OData and MCP, creating tools from OData metadata."""
 
-    def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, mcp_name: str = "odata-mcp", verbose: bool = False, 
+    def __init__(self, service_url: str, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, 
+                 oauth_manager: Optional[object] = None, mcp_name: str = "odata-mcp", verbose: bool = False, 
                  tool_prefix: Optional[str] = None, tool_postfix: Optional[str] = None, use_postfix: bool = True, tool_shrink: bool = False,
                  allowed_entities: Optional[List[str]] = None, allowed_functions: Optional[List[str]] = None, sort_tools: bool = True,
                  pagination_hints: bool = False, legacy_dates: bool = True, verbose_errors: bool = False,
@@ -47,6 +48,7 @@ class ODataMCPBridge:
                  enabled_operations: Optional[set] = None, disabled_operations: Optional[set] = None):
         self.service_url = service_url
         self.auth = auth
+        self.oauth_manager = oauth_manager
         self.verbose = verbose
         self.tool_shrink = tool_shrink
         self.allowed_entities = allowed_entities
@@ -123,13 +125,14 @@ class ODataMCPBridge:
 
         try:
             self._log_verbose("Initializing Metadata Parser...")
-            self.parser = MetadataParser(service_url, auth, verbose=self.verbose)
+            self.parser = MetadataParser(service_url, auth, oauth_manager=self.oauth_manager, verbose=self.verbose)
             self._log_verbose("Parsing OData Metadata...")
             self.metadata = self.parser.parse()
             self._log_verbose("Metadata Parsed. Initializing OData Client...")
             self.client = ODataClient(
                 self.metadata, 
-                auth, 
+                auth,
+                oauth_manager=self.oauth_manager,
                 verbose=self.verbose,
                 optimize_guids=True,  # Enable GUID optimization by default
                 max_response_items=self.max_items,

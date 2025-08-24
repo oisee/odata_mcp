@@ -14,6 +14,7 @@ import requests
 from .constants import ODATA_PRIMITIVE_TYPES
 from .models import EntityType, ODataMetadata
 from .guid_handler import ODataGUIDHandler
+from .oauth_handler import OAuthTokenManager
 
 
 def encode_query_params(params):
@@ -31,12 +32,14 @@ class ODataClient:
     """Client for interacting with an OData v2 service."""
 
     def __init__(self, metadata: ODataMetadata, auth: Optional[Union[Tuple[str, str], Dict[str, str]]] = None, 
+                 oauth_manager: Optional[OAuthTokenManager] = None,
                  verbose: bool = False, optimize_guids: bool = True,
                  max_response_items: int = 1000, pagination_hints: bool = False,
                  legacy_dates: bool = True, verbose_errors: bool = False,
                  response_metadata: bool = False, max_response_size: int = 5 * 1024 * 1024):
         self.metadata = metadata
         self.auth = auth
+        self.oauth_manager = oauth_manager
         self.verbose = verbose
         self.optimize_guids = optimize_guids
         self.max_response_items = max_response_items
@@ -50,7 +53,10 @@ class ODataClient:
         self.session = requests.Session()
         
         # Handle different auth types
-        if auth:
+        if oauth_manager:
+            # OAuth authentication
+            self.auth_type = "oauth"
+        elif auth:
             if isinstance(auth, tuple) and len(auth) == 2:
                 # Basic auth
                 self.session.auth = auth
@@ -317,6 +323,11 @@ class ODataClient:
         request_headers = self.session.headers.copy()
         if 'headers' in kwargs:
             request_headers.update(kwargs.pop('headers'))
+            
+        # Add OAuth Authorization header if using OAuth
+        if self.auth_type == "oauth" and self.oauth_manager:
+            oauth_headers = self.oauth_manager.get_authorization_header()
+            request_headers.update(oauth_headers)
 
         # Add CSRF token if we have one
         if is_modifying and requires_csrf and self.csrf_token:

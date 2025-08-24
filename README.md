@@ -15,7 +15,7 @@ The OData MCP Wrapper enables seamless integration between OData v2 services and
 - **Full CRUD Support**: Create, Read, Update, Delete operations for entity sets
 - **Query Capabilities**: Standard OData query parameters (filter, select, expand, orderby, etc.)
 - **Function Import Support**: Handles OData function imports
-- **Authentication**: Basic auth, cookie-based auth, and OAuth 2.0 with CSRF token management
+- **Authentication**: Basic auth, cookie-based auth, and OAuth 2.0 with CSRF token management (OAuth newly added!)
 - **GUID Optimization**: Automatic base64 ↔ standard GUID conversion
 - **Response Optimization**: Size limiting and selective field retrieval
 - **Legacy Date Support**: Automatic conversion between SAP /Date(milliseconds)/ and ISO 8601
@@ -264,7 +264,7 @@ Useful for diagnosing client compatibility issues.
 
 ## OAuth 2.0 Authentication
 
-The OData MCP wrapper supports OAuth 2.0 authentication for modern, secure access to protected OData services.
+The OData MCP wrapper supports OAuth 2.0 authentication for modern, secure access to protected OData services. This feature addresses [GitHub Discussion #9](https://github.com/oisee/odata_mcp/discussions/9) requesting OIDC authentication support.
 
 ### Supported OAuth Flows
 
@@ -634,13 +634,43 @@ test_http_transport.sh            # HTTP transport test script
 
 ## Testing
 
+### Unit Tests
 ```bash
-# Run unit tests
+# Run basic unit tests
 python test_odata_mcp.py
 
 # Run with live service (requires valid OData service)
 RUN_LIVE_TESTS=true python test_odata_mcp.py
 ```
+
+### OAuth Testing
+```bash
+# Test OAuth implementation without credentials
+python test_oauth.py --skip-graph
+
+# Run comprehensive OAuth test suite
+python test_oauth_comprehensive.py
+
+# Test with Microsoft Graph (requires Azure AD app)
+export OAUTH_CLIENT_ID="your-client-id"
+export OAUTH_CLIENT_SECRET="your-secret"
+python test_oauth.py
+```
+
+### Integration Testing
+```bash
+# Test with public Northwind service
+python odata_mcp.py --service https://services.odata.org/V2/Northwind/Northwind.svc/ --trace
+
+# Test OAuth with mock credentials (verifies flow)
+python odata_mcp.py \
+    --service https://graph.microsoft.com/v1.0/ \
+    --oauth-client-id test-id \
+    --oauth-client-secret test-secret \
+    --verbose 2>&1 | grep OAuth
+```
+
+For complete testing documentation, see [OAuth Testing Report](OAUTH_TESTING_SUMMARY.md).
 
 ## Import Compatibility
 
@@ -748,6 +778,8 @@ Join our community discussions to:
 - [Architecture Guide](ARCHITECTURE.md) - System design and module structure
 - [Implementation Guide](IMPLEMENTATION_GUIDE.md) - Development patterns and guidelines
 - [Cookie Authentication](COOKIE_AUTH.md) - Detailed cookie auth documentation
+- [OAuth 2.0 Authentication](OAUTH_AUTH.md) - Complete OAuth implementation guide
+- [OAuth Testing Report](OAUTH_TESTING_SUMMARY.md) - Test coverage and verification
 
 ## License
 
@@ -757,4 +789,5 @@ Copyright (c) 2025. All rights reserved.
 
 **Project Status**: Production Ready ✅  
 **Architecture**: Modular and Maintainable ✅  
-**Version**: 1.3 (Refactored)
+**Version**: 1.4 (OAuth 2.0 Support)  
+**OAuth Status**: Fully Implemented & Tested ✅

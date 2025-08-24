@@ -150,11 +150,12 @@ def main():
     total_tests = 0
     
     # Test 1: Basic OAuth token fetch
-    total_tests += 1
-    if args.skip_graph:
+    if not args.skip_graph:
+        total_tests += 1
+        if test_oauth_token_fetch():
+            tests_passed += 1
+    else:
         print("⏭️  Skipping Graph API tests")
-    elif test_oauth_token_fetch():
-        tests_passed += 1
     
     # Test 2: Graph metadata with OAuth  
     if not args.skip_graph:

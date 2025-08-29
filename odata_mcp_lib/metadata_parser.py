@@ -6,7 +6,11 @@ import sys
 from datetime import datetime
 from typing import Dict, Optional, Tuple, Union
 import requests
+import urllib3
 from lxml import etree
+
+# Disable SSL warnings for development/internal servers
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from .constants import NAMESPACES
 from .models import EntityProperty, EntityType, EntitySet, FunctionImport, ODataMetadata
@@ -28,6 +32,8 @@ class MetadataParser:
         if oauth_manager:
             # OAuth authentication
             self.auth_type = "oauth"
+            # Disable SSL verification for development/internal servers
+            self.session.verify = False
         elif auth:
             if isinstance(auth, tuple) and len(auth) == 2:
                 # Basic auth

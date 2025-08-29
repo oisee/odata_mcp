@@ -10,6 +10,10 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, quote
 import requests
+import urllib3
+
+# Disable SSL warnings for development/internal servers
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 from .constants import ODATA_PRIMITIVE_TYPES
 from .models import EntityType, ODataMetadata
@@ -56,6 +60,8 @@ class ODataClient:
         if oauth_manager:
             # OAuth authentication
             self.auth_type = "oauth"
+            # Disable SSL verification for development/internal servers
+            self.session.verify = False
         elif auth:
             if isinstance(auth, tuple) and len(auth) == 2:
                 # Basic auth
